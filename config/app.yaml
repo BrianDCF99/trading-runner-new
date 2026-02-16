@@ -1,0 +1,29 @@
+runner:
+  name: trading-runner-new
+  timezone: America/Los_Angeles
+  scan_interval_seconds: 60
+  strategy_root: strategies
+
+strategies:
+  - id: bybit:new-listing-suite:v2
+    enabled: true
+    directory: new-listing-suite
+
+  - id: bybit:funding:rule-i:v7
+    enabled: false
+    directory: funding-rule-i
+
+  - id: bybit:long25-suite:v1
+    enabled: true
+    directory: long25-suite
+
+exchange:
+  bybit:
+    enabled: true
+    api_base: https://api.bybit.com
+    request_timeout_ms: 15000
+
+telegram:
+  enabled: true
+  parse_mode: HTML
+  send_delay_ms: 900

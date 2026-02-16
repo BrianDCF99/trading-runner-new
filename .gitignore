@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+data/runtime
+.DS_Store
+*.log
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.cer
