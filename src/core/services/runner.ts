@@ -141,13 +141,13 @@ function formatFundingIntervalLabel(minutes: number | null): string {
   const roundedMinutes = Math.max(0, Math.floor(minutes));
   const hours = Math.floor(roundedMinutes / 60);
   const remainderMinutes = roundedMinutes % 60;
+  if (remainderMinutes === 0) return `${hours}h`;
   return `${hours}:${String(remainderMinutes).padStart(2, "0")}`;
 }
 
 function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupSnapshot): string {
   const symbolLink = formatSymbolLink(exchange, setup.symbol);
   const fundingRate = readNumericPayload(setup.payload, "fundingRate");
-  const threshold = readNumericPayload(setup.payload, "threshold");
   const fundingIntervalMinutes = readNumericPayload(setup.payload, "fundingIntervalMinutes");
   const payloadSettlement = setup.payload.settlementLabel;
   const intervalLabel = formatFundingIntervalLabel(fundingIntervalMinutes);
@@ -157,7 +157,7 @@ function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupS
       : typeof payloadSettlement === "string" && payloadSettlement.trim().length > 0
         ? payloadSettlement.trim()
         : "unknown";
-  return `${symbolLink} | ${formatPercent(fundingRate)} (threshold ${formatPercent(threshold)}) | ${escapeHtml(settlementLabel)}`;
+  return `${symbolLink} | ${formatPercent(fundingRate)} | ${escapeHtml(settlementLabel)}`;
 }
 
 function formatNewListingSnapshotRow(exchange: "bybit", sectionLabel: string, setup: RuntimeSetupSnapshot, nowMs: number): string {

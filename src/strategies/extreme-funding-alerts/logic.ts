@@ -40,6 +40,7 @@ function toHourClock(totalMinutes: number): string {
   const roundedMinutes = Math.max(0, Math.floor(totalMinutes));
   const hours = Math.floor(roundedMinutes / 60);
   const minutes = roundedMinutes % 60;
+  if (minutes === 0) return `${hours}h`;
   return `${hours}:${String(minutes).padStart(2, "0")}`;
 }
 

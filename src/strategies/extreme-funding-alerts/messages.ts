@@ -17,6 +17,7 @@ function toHourClock(totalMinutes: number): string {
   const roundedMinutes = Math.max(0, Math.floor(totalMinutes));
   const hours = Math.floor(roundedMinutes / 60);
   const minutes = roundedMinutes % 60;
+  if (minutes === 0) return `${hours}h`;
   return `${hours}:${String(minutes).padStart(2, "0")}`;
 }
 
@@ -41,7 +42,7 @@ export function formatExtremeFundingMessages(signals: StrategySignal[]): string[
       [
         `🚨 <b>EXTREME FUNDING</b>`,
         `<b>${signal.symbol}</b>`,
-        `Funding: ${fmtPercent(signal.data.fundingRate)} (threshold ${fmtPercent(signal.data.threshold)})`,
+        `Funding: ${fmtPercent(signal.data.fundingRate)}`,
         `Settlement: ${resolveSettlementLabel(signal)}`,
         `Mark Price: ${fmtPrice(signal.data.markPrice)}`,
         `Strategy: ${signal.strategyName}`,
