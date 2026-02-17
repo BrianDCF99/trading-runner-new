@@ -2,6 +2,7 @@
  * New listing strategy message formatter.
  */
 import type { StrategySignal } from "../../core/domain/types.js";
+import { escapeHtml, formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
 
 type ListingEventType =
   | "LISTING_RELEASED"
@@ -23,29 +24,6 @@ function fmtUsd(value: unknown, maxFractionDigits = 8): string {
   return `$${value.toLocaleString("en-US", { maximumFractionDigits: maxFractionDigits })}`;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function resolveTickerUrl(symbol: string): string {
-  const template = process.env.TELEGRAM_TICKER_URL_TEMPLATE?.trim();
-  if (template && template.length > 0) {
-    return template
-      .replaceAll("{symbol}", encodeURIComponent(symbol))
-      .replaceAll("{exchange}", encodeURIComponent("bybit"));
-  }
-  return `https://www.bybit.com/trade/usdt/${encodeURIComponent(symbol)}`;
-}
-
-function formatSymbolLink(symbol: string): string {
-  return `<b><a href="${escapeHtml(resolveTickerUrl(symbol))}">${escapeHtml(symbol)}</a></b>`;
-}
-
 function readEventType(signal: StrategySignal): ListingEventType | null {
   const value = signal.data.eventType;
   if (typeof value !== "string") return null;
@@ -65,7 +43,7 @@ function readEventType(signal: StrategySignal): ListingEventType | null {
 function formatReleaseMessage(signal: StrategySignal): string {
   return [
     "📡 <b>Bybit New Listing Detected</b>",
-    formatSymbolLink(signal.symbol),
+    formatSymbolLink("bybit", signal.symbol),
     `Listing price: ${fmtUsd(signal.data.listingPrice)}`,
     `Turnover_1h snapshot: ${fmtUsd(signal.data.turnover1h, 2)}`,
     "Status: <b>WATCHING</b>",
@@ -75,7 +53,7 @@ function formatReleaseMessage(signal: StrategySignal): string {
 function format4hLeg1Message(signal: StrategySignal): string {
   return [
     "⏱️ <b>4H Checkpoint</b>",
-    formatSymbolLink(signal.symbol),
+    formatSymbolLink("bybit", signal.symbol),
     "Result: <b>LEG1 QUALIFIED</b>",
     `ret_4h: ${fmtPercent(signal.data.ret4h)} | turnover_1h: ${fmtUsd(signal.data.turnover1h, 2)}`,
     "Next: evaluate LEG2 at 8h",
@@ -86,7 +64,7 @@ function format4hWatchMessage(signal: StrategySignal): string {
   const detail = typeof signal.data.eventDetail === "string" ? signal.data.eventDetail : "LEG1 conditions not met.";
   return [
     "⏱️ <b>4H Checkpoint</b>",
-    formatSymbolLink(signal.symbol),
+    formatSymbolLink("bybit", signal.symbol),
     "Result: <b>LEG1 NOT QUALIFIED</b>",
     "Action: <b>WATCH S7 AT 8H</b>",
     `ret_4h: ${fmtPercent(signal.data.ret4h)} | max_pump_4h: ${fmtPercent(signal.data.pump4h)}`,
@@ -97,7 +75,7 @@ function format4hWatchMessage(signal: StrategySignal): string {
 function format8hLeg2Message(signal: StrategySignal): string {
   return [
     "⏱️ <b>8H Checkpoint</b>",
-    formatSymbolLink(signal.symbol),
+    formatSymbolLink("bybit", signal.symbol),
     "Result: <b>LEG2 QUALIFIED</b>",
     `ret_8h: ${fmtPercent(signal.data.ret8h)}`,
   ].join("\n");
@@ -106,7 +84,7 @@ function format8hLeg2Message(signal: StrategySignal): string {
 function format8hS7Message(signal: StrategySignal): string {
   return [
     "⏱️ <b>8H Checkpoint</b>",
-    formatSymbolLink(signal.symbol),
+    formatSymbolLink("bybit", signal.symbol),
     "Result: <b>S7 QUALIFIED</b>",
     `ret_8h: ${fmtPercent(signal.data.ret8h)} | max_pump_4h: ${fmtPercent(signal.data.pump4h)}`,
   ].join("\n");
@@ -115,7 +93,7 @@ function format8hS7Message(signal: StrategySignal): string {
 function formatForcedCloseMessage(signal: StrategySignal): string {
   return [
     "🔵 <b>14D Close Window</b>",
-    formatSymbolLink(signal.symbol),
+    formatSymbolLink("bybit", signal.symbol),
     "Result: <b>CLOSED</b>",
     "Reason: 14-day max hold reached",
   ].join("\n");

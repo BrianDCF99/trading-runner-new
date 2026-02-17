@@ -2,6 +2,7 @@
  * Extreme funding alert strategy message formatter.
  */
 import type { StrategySignal } from "../../core/domain/types.js";
+import { formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
 
 function fmtPercent(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
@@ -41,7 +42,7 @@ export function formatExtremeFundingMessages(signals: StrategySignal[]): string[
     out.push(
       [
         `🚨 <b>EXTREME FUNDING</b>`,
-        `<b>${signal.symbol}</b>`,
+        formatSymbolLink("bybit", signal.symbol),
         `Funding: ${fmtPercent(signal.data.fundingRate)}`,
         `Settlement: ${resolveSettlementLabel(signal)}`,
         `Mark Price: ${fmtPrice(signal.data.markPrice)}`,

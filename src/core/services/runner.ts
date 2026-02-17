@@ -28,6 +28,7 @@ import type {
   StateStorePort,
 } from "../ports/interfaces.js";
 import type { StrategyModule } from "../domain/types.js";
+import { escapeHtml, formatSymbolLink } from "../utils/telegramSymbolLink.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -37,31 +38,6 @@ const NEW_LISTING_CLOSE_MS = 14 * DAY_MS;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function resolveTickerUrl(exchange: "bybit", symbol: string): string {
-  const template = process.env.TELEGRAM_TICKER_URL_TEMPLATE?.trim();
-  if (template && template.length > 0) {
-    return template
-      .replaceAll("{symbol}", encodeURIComponent(symbol))
-      .replaceAll("{exchange}", encodeURIComponent(exchange));
-  }
-  return `https://www.bybit.com/trade/usdt/${encodeURIComponent(symbol)}`;
-}
-
-function formatSymbolLink(exchange: "bybit", symbol: string): string {
-  const escapedUrl = escapeHtml(resolveTickerUrl(exchange, symbol));
-  const escapedSymbol = escapeHtml(symbol);
-  return `<b><a href="${escapedUrl}">${escapedSymbol}</a></b>`;
 }
 
 function isCheckpoint4hProcessed(setup: RuntimeSetupSnapshot): boolean {
