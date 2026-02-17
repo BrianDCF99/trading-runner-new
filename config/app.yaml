@@ -13,8 +13,12 @@ strategies:
     enabled: false
     directory: funding-rule-i
 
-  - id: bybit:long25-suite:v1
+  - id: bybit:extreme-funding-suite:v1
     enabled: true
+    directory: extreme-funding-alerts
+
+  - id: bybit:long25-suite:v1
+    enabled: false
     directory: long25-suite
 
 exchange:

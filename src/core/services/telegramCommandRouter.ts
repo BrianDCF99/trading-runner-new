@@ -38,15 +38,25 @@ function parseExecutionDecisionData(data: string): { decisionId: string; decisio
   };
 }
 
-function resolveWatchingKind(token?: string): "new" | "funding" | "long25" | null {
+function resolveWatchingKind(token?: string): "new" | "funding" | "long25" | "extremeFunding" | null {
   if (!token) return null;
   const normalized = token.trim().toLowerCase();
   const newAliases = new Set(["new", "new-listing", "listing", "vfinal"]);
   const fundingAliases = new Set(["funding", "funding-v7", "rule-i"]);
   const long25Aliases = new Set(["long25", "long", "v_vol25_min1", "v-vol25-min1", "vol25"]);
+  const extremeFundingAliases = new Set([
+    "xfund",
+    "x-fund",
+    "x_fund",
+    "extremefunding",
+    "extreme-funding",
+    "extreme_funding",
+    "extreme",
+  ]);
   if (newAliases.has(normalized)) return "new";
   if (fundingAliases.has(normalized)) return "funding";
   if (long25Aliases.has(normalized)) return "long25";
+  if (extremeFundingAliases.has(normalized)) return "extremeFunding";
   return null;
 }
 
@@ -86,6 +96,14 @@ function resolveNextAlertLabel(setup: RuntimeSetupSnapshot): string {
   if (setup.strategyId === "bybit:long25:v1" || setup.strategyId === "bybit:long25-suite:v1") {
     if (setup.phase === "READY") return "volume watchdog active";
     if (setup.phase === "CLOSED") return "none (closed)";
+    return "watching";
+  }
+
+  if (
+    setup.strategyId === "bybit:extreme-funding:alerts:v1" ||
+    setup.strategyId === "bybit:extreme-funding-suite:v1"
+  ) {
+    if (setup.phase === "ALERT") return "extreme funding threshold active";
     return "watching";
   }
 
@@ -198,11 +216,29 @@ export class TelegramCommandRouter {
         return;
       }
 
+      case "xfund":
+      case "x_fund":
+      case "x-fund":
+      case "extremefunding":
+      case "extreme_funding": {
+        const text = await this.options.runner.getWatchingSnapshot("extremeFunding");
+        await this.options.notifier.sendMessage(text, { chatId: command.chatId });
+        return;
+      }
+
       case "watching": {
         const requested = command.args[0];
         if (!requested) {
           await this.options.notifier.sendMessage(
-            ["Use dedicated commands for watching snapshots:", "/new", "/funding", "/long25", "", "Legacy alias: /watching <new|funding|long25>"].join(
+            [
+              "Use dedicated commands for watching snapshots:",
+              "/new",
+              "/funding",
+              "/xfund",
+              "/long25",
+              "",
+              "Legacy alias: /watching <new|funding|xfund|long25>",
+            ].join(
               "\n"
             ),
             { chatId: command.chatId }
@@ -213,7 +249,7 @@ export class TelegramCommandRouter {
         const kind = resolveWatchingKind(requested);
         if (!kind) {
           await this.options.notifier.sendMessage(
-            `Unknown watching scope "${requested}". Use /watching new, /watching funding, or /watching long25.`,
+            `Unknown watching scope "${requested}". Use /watching new, /watching funding, /watching xfund, or /watching long25.`,
             { chatId: command.chatId }
           );
           return;
@@ -288,7 +324,20 @@ export class TelegramCommandRouter {
 
       default:
         await this.options.notifier.sendMessage(
-          ["Available commands:", "/ping", "/status", "/ready", "/new", "/funding", "/long25", "/watching", "/positions", "/scan", "/refresh"].join(
+          [
+            "Available commands:",
+            "/ping",
+            "/status",
+            "/ready",
+            "/new",
+            "/funding",
+            "/xfund",
+            "/long25",
+            "/watching",
+            "/positions",
+            "/scan",
+            "/refresh",
+          ].join(
             "\n"
           ),
           { chatId: command.chatId }

@@ -27,6 +27,8 @@ The new runner now supports:
 - `/scan`
 - `/new`
 - `/funding`
+- `/xfund`
+- `/long25`
 - `/watching`
 - `/positions`
 - `/refresh`

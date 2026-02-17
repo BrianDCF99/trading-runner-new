@@ -31,6 +31,7 @@ npm start
 - `/status`
 - `/new`
 - `/funding`
+- `/xfund`
 
 All replies should include `NEW`.
 

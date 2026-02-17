@@ -75,7 +75,7 @@ function isNewListingS7WatchCandidate(setup: RuntimeSetupSnapshot): boolean {
 }
 
 function sortSnapshotSection(
-  kind: "new" | "funding" | "long25",
+  kind: "new" | "funding" | "long25" | "extremeFunding",
   sectionLabel: string,
   setups: RuntimeSetupSnapshot[]
 ): RuntimeSetupSnapshot[] {
@@ -129,6 +129,35 @@ function formatElapsed(startMs: number | null, nowMs: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return `${hours}:${String(minutes).padStart(2, "0")}`;
+}
+
+function formatPercent(value: number | null, digits = 3): string {
+  if (value === null || !Number.isFinite(value)) return "n/a";
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+function formatFundingIntervalLabel(minutes: number | null): string {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) return "unknown";
+  const roundedMinutes = Math.max(0, Math.floor(minutes));
+  const hours = Math.floor(roundedMinutes / 60);
+  const remainderMinutes = roundedMinutes % 60;
+  return `${hours}:${String(remainderMinutes).padStart(2, "0")}`;
+}
+
+function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupSnapshot): string {
+  const symbolLink = formatSymbolLink(exchange, setup.symbol);
+  const fundingRate = readNumericPayload(setup.payload, "fundingRate");
+  const threshold = readNumericPayload(setup.payload, "threshold");
+  const fundingIntervalMinutes = readNumericPayload(setup.payload, "fundingIntervalMinutes");
+  const payloadSettlement = setup.payload.settlementLabel;
+  const intervalLabel = formatFundingIntervalLabel(fundingIntervalMinutes);
+  const settlementLabel =
+    intervalLabel !== "unknown"
+      ? intervalLabel
+      : typeof payloadSettlement === "string" && payloadSettlement.trim().length > 0
+        ? payloadSettlement.trim()
+        : "unknown";
+  return `${symbolLink} | ${formatPercent(fundingRate)} (threshold ${formatPercent(threshold)}) | ${escapeHtml(settlementLabel)}`;
 }
 
 function formatNewListingSnapshotRow(exchange: "bybit", sectionLabel: string, setup: RuntimeSetupSnapshot, nowMs: number): string {
@@ -443,7 +472,7 @@ export class RunnerService implements RunnerPort {
     }
   }
 
-  async getWatchingSnapshot(kind: "new" | "funding" | "long25"): Promise<string> {
+  async getWatchingSnapshot(kind: "new" | "funding" | "long25" | "extremeFunding"): Promise<string> {
     const catalog =
       kind === "new"
         ? {
@@ -477,12 +506,19 @@ export class RunnerService implements RunnerPort {
               ],
               subtitle: "👀 <b>Watching</b>",
             }
-          : {
-              title: "Bybit Long Strategy V_vol25_min1",
-              strategyIds: ["bybit:long25-suite:v1", "bybit:long25:v1"],
-              sections: [{ label: "READY", phases: ["READY"] }],
-              subtitle: "📈 <b>READY Entries</b>",
-            };
+          : kind === "extremeFunding"
+            ? {
+                title: "Bybit Extreme Funding Alerts",
+                strategyIds: ["bybit:extreme-funding-suite:v1", "bybit:extreme-funding:alerts:v1"],
+                sections: [{ label: "ALERT", phases: ["ALERT"] }],
+                subtitle: "🚨 <b>Triggered Alerts</b>",
+              }
+            : {
+                title: "Bybit Long Strategy V_vol25_min1",
+                strategyIds: ["bybit:long25-suite:v1", "bybit:long25:v1"],
+                sections: [{ label: "READY", phases: ["READY"] }],
+                subtitle: "📈 <b>READY Entries</b>",
+              };
 
     const tracked = await this.options.runtimeStore.getActiveSetups({
       exchange: this.options.exchange,
@@ -525,13 +561,23 @@ export class RunnerService implements RunnerPort {
           lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)} | ${entryPriceText} | ${held}`);
           continue;
         }
+        if (kind === "extremeFunding") {
+          lines.push(`${index + 1}. ${formatExtremeFundingSnapshotRow(this.options.exchange, setup)}`);
+          continue;
+        }
         lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)}`);
       }
       lines.push("");
     }
 
     if (renderedSectionCount === 0) {
-      lines.push(kind === "long25" ? "No READY entries right now." : "No active tracked coins right now.");
+      lines.push(
+        kind === "long25"
+          ? "No READY entries right now."
+          : kind === "extremeFunding"
+            ? "No extreme funding alerts right now."
+            : "No active tracked coins right now."
+      );
     }
 
     if (kind === "long25") {

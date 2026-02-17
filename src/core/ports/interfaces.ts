@@ -101,5 +101,5 @@ export interface StrategyLoaderPort {
 export interface RunnerPort {
   start(): Promise<void>;
   runOnce(trigger: RunnerTrigger): Promise<CycleRunResult>;
-  getWatchingSnapshot(kind: "new" | "funding" | "long25"): Promise<string>;
+  getWatchingSnapshot(kind: "new" | "funding" | "long25" | "extremeFunding"): Promise<string>;
 }
