@@ -1,7 +1,7 @@
 /**
  * Public Bybit REST adapter used by strategies.
  */
-import type { BybitInstrument, BybitTicker, Kline1h } from "../../core/domain/types.js";
+import type { BybitInstrument, BybitTicker, Kline1h, SellRatio1hSnapshot } from "../../core/domain/types.js";
 import type { MarketDataPort } from "../../core/ports/interfaces.js";
 
 interface HttpOptions {
@@ -32,6 +32,15 @@ function parseNumber(value: unknown): number {
   return 0;
 }
 
+function parseNullableNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function parseEpochMs(value: unknown): number | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const parsed = Number(value);
@@ -39,7 +48,17 @@ function parseEpochMs(value: unknown): number | null {
   return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
 }
 
+const SELL_RATIO_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface SellRatioCacheEntry {
+  fetchedAtMs: number;
+  snapshot: SellRatio1hSnapshot;
+}
+
 export class BybitPublicClient implements MarketDataPort {
+  private readonly sellRatioCache = new Map<string, SellRatioCacheEntry>();
+  private readonly sellRatioInFlight = new Map<string, Promise<SellRatio1hSnapshot>>();
+
   constructor(
     private readonly apiBase: string,
     private readonly timeoutMs: number
@@ -103,5 +122,93 @@ export class BybitPublicClient implements MarketDataPort {
       .sort((a, b) => a.openTimeMs - b.openTimeMs);
 
     return mapped;
+  }
+
+  async getSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot> {
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    if (!normalizedSymbol) {
+      return {
+        symbol: "",
+        sellRatio: null,
+        timestampMs: null,
+      };
+    }
+
+    const nowMs = Date.now();
+    const cached = this.sellRatioCache.get(normalizedSymbol);
+    if (cached && nowMs - cached.fetchedAtMs < SELL_RATIO_CACHE_TTL_MS) {
+      return cached.snapshot;
+    }
+
+    const inFlight = this.sellRatioInFlight.get(normalizedSymbol);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const request = this.fetchSellRatio1h(normalizedSymbol)
+      .catch(() => ({
+        symbol: normalizedSymbol,
+        sellRatio: null,
+        timestampMs: null,
+      }))
+      .finally(() => {
+        this.sellRatioInFlight.delete(normalizedSymbol);
+      });
+
+    this.sellRatioInFlight.set(normalizedSymbol, request);
+    const snapshot = await request;
+    this.sellRatioCache.set(normalizedSymbol, {
+      fetchedAtMs: nowMs,
+      snapshot,
+    });
+    return snapshot;
+  }
+
+  private async fetchSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot> {
+    const url = `${this.apiBase}/v5/market/account-ratio?category=linear&symbol=${encodeURIComponent(symbol)}&period=1h&limit=1`;
+    const raw = (await fetchJson(url, { timeoutMs: this.timeoutMs })) as {
+      result?: { list?: Array<Record<string, unknown>> };
+    };
+
+    const list = raw.result?.list ?? [];
+    if (list.length === 0) {
+      return {
+        symbol,
+        sellRatio: null,
+        timestampMs: null,
+      };
+    }
+
+    let latest: SellRatio1hSnapshot = {
+      symbol,
+      sellRatio: null,
+      timestampMs: null,
+    };
+
+    for (const row of list) {
+      const timestampMs = parseEpochMs(row.timestamp);
+      if (timestampMs === null) {
+        continue;
+      }
+      if (latest.timestampMs !== null && latest.timestampMs >= timestampMs) {
+        continue;
+      }
+      latest = {
+        symbol,
+        sellRatio: parseNullableNumber(row.sellRatio),
+        timestampMs,
+      };
+    }
+
+    if (latest.timestampMs === null) {
+      const first = list[0] ?? {};
+      return {
+        symbol,
+        sellRatio: parseNullableNumber(first.sellRatio),
+        timestampMs: parseEpochMs(first.timestamp),
+      };
+    }
+
+    return latest;
   }
 }

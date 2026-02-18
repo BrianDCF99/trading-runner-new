@@ -51,7 +51,7 @@ function isNewListingS7WatchCandidate(setup: RuntimeSetupSnapshot): boolean {
 }
 
 function sortSnapshotSection(
-  kind: "new" | "funding" | "long25" | "extremeFunding",
+  kind: "new" | "funding" | "long25" | "extremeFunding" | "sellPressure",
   sectionLabel: string,
   setups: RuntimeSetupSnapshot[]
 ): RuntimeSetupSnapshot[] {
@@ -307,6 +307,7 @@ export class RunnerService implements RunnerPort {
         tickers,
         instruments,
         getKlines1h: (symbol: string, limit: number) => this.options.marketData.getKlines1h(symbol, limit),
+        getSellRatio1h: (symbol: string) => this.options.marketData.getSellRatio1h(symbol),
       };
 
       const strategyConfig = await this.options.runtimeStore.getStrategyConfig(this.options.exchange);
@@ -448,7 +449,7 @@ export class RunnerService implements RunnerPort {
     }
   }
 
-  async getWatchingSnapshot(kind: "new" | "funding" | "long25" | "extremeFunding"): Promise<string> {
+  async getWatchingSnapshot(kind: "new" | "funding" | "long25" | "extremeFunding" | "sellPressure"): Promise<string> {
     const catalog =
       kind === "new"
         ? {
@@ -489,6 +490,16 @@ export class RunnerService implements RunnerPort {
                 sections: [{ label: "ALERT", phases: ["ALERT"] }],
                 subtitle: "🚨 <b>Triggered Alerts</b>",
               }
+            : kind === "sellPressure"
+              ? {
+                  title: "Bybit Extreme Sell Pressure v4.3",
+                  strategyIds: [
+                    "bybit:extreme-sell-pressure-suite:v43",
+                    "bybit:extreme-sell-pressure:v43",
+                  ],
+                  sections: [{ label: "OPEN_SHORT", phases: ["OPEN_SHORT"] }],
+                  subtitle: "📉 <b>Open Positions</b>",
+                }
             : {
                 title: "Bybit Long Strategy V_vol25_min1",
                 strategyIds: ["bybit:long25-suite:v1", "bybit:long25:v1"],
@@ -541,6 +552,14 @@ export class RunnerService implements RunnerPort {
           lines.push(`${index + 1}. ${formatExtremeFundingSnapshotRow(this.options.exchange, setup)}`);
           continue;
         }
+        if (kind === "sellPressure") {
+          const entryAtMs = readNumericPayload(setup.payload, "entryAtMs");
+          const markMovePct = readNumericPayload(setup.payload, "markMovePct");
+          const held = formatElapsed(entryAtMs, nowMs);
+          const moveText = markMovePct === null ? "n/a" : `${markMovePct > 0 ? "+" : ""}${markMovePct.toFixed(2)}%`;
+          lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)} | ${moveText} | ${held}`);
+          continue;
+        }
         lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)}`);
       }
       lines.push("");
@@ -552,6 +571,8 @@ export class RunnerService implements RunnerPort {
           ? "No READY entries right now."
           : kind === "extremeFunding"
             ? "No extreme funding alerts right now."
+            : kind === "sellPressure"
+              ? "No open sell-pressure positions right now."
             : "No active tracked coins right now."
       );
     }
@@ -564,6 +585,21 @@ export class RunnerService implements RunnerPort {
       lines.push(`Liquidations: <b>${stats.totalLiquidations}</b>`);
       lines.push(`Winners: <b>${stats.totalWinners}</b>`);
       lines.push(`Win %: <b>${stats.winRatePct.toFixed(2)}%</b>`);
+    }
+
+    if (kind === "sellPressure") {
+      const stats = this.readSellPressureStatsFromModule();
+      const pnlText = `${stats.pnlPct > 0 ? "+" : ""}${stats.pnlPct.toFixed(2)}%`;
+      lines.push("");
+      lines.push("📊 <b>Live Totals</b>");
+      lines.push(`Entries: <b>${stats.entries}</b>`);
+      lines.push(`Missed Trades: <b>${stats.missedTrades}</b>`);
+      lines.push(`Winners: <b>${stats.winners}</b>`);
+      lines.push(`Losers: <b>${stats.losers}</b>`);
+      lines.push(`Liquidated: <b>${stats.liquidated}</b>`);
+      lines.push(`Replaced: <b>${stats.replaced}</b>`);
+      lines.push(`PnL: <b>${pnlText}</b>`);
+      lines.push(`Win %: <b>${stats.winPct.toFixed(2)}%</b>`);
     }
 
     while (lines.length > 0 && lines[lines.length - 1] === "") {
@@ -743,6 +779,65 @@ export class RunnerService implements RunnerPort {
       totalLiquidations,
       totalWinners,
       winRatePct,
+    };
+  }
+
+  private readSellPressureStatsFromModule(): {
+    entries: number;
+    missedTrades: number;
+    winners: number;
+    losers: number;
+    liquidated: number;
+    replaced: number;
+    pnlPct: number;
+    winPct: number;
+  } {
+    const module = this.options.strategies.find(
+      (strategy) =>
+        strategy.id === "bybit:extreme-sell-pressure-suite:v43" ||
+        (strategy.strategyIds ? strategy.strategyIds.includes("bybit:extreme-sell-pressure:v43") : false)
+    );
+    if (!module?.exportState) {
+      return {
+        entries: 0,
+        missedTrades: 0,
+        winners: 0,
+        losers: 0,
+        liquidated: 0,
+        replaced: 0,
+        pnlPct: 0,
+        winPct: 0,
+      };
+    }
+
+    const snapshot = module.exportState();
+    if (!snapshot || typeof snapshot !== "object") {
+      return {
+        entries: 0,
+        missedTrades: 0,
+        winners: 0,
+        losers: 0,
+        liquidated: 0,
+        replaced: 0,
+        pnlPct: 0,
+        winPct: 0,
+      };
+    }
+
+    const rawStats = (snapshot as { snapshotStats?: Record<string, unknown> }).snapshotStats;
+    const read = (key: string): number => {
+      const value = rawStats?.[key];
+      return typeof value === "number" && Number.isFinite(value) ? value : 0;
+    };
+    return {
+      entries: Math.max(0, Math.floor(read("entries"))),
+      missedTrades: Math.max(0, Math.floor(read("missedTrades"))),
+      winners: Math.max(0, Math.floor(read("winners"))),
+      losers: Math.max(0, Math.floor(read("losers"))),
+      liquidated: Math.max(0, Math.floor(read("liquidated"))),
+      replaced: Math.max(0, Math.floor(read("replaced"))),
+      pnlPct: read("pnlPct"),
+      winPct: read("winPct"),
     };
   }
 

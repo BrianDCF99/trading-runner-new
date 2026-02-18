@@ -1,0 +1,33 @@
+# extreme-sell-pressure-v43
+
+Live strategy module for the V4.3 position-cap variant of the extreme sell-pressure event.
+
+Folder contract:
+
+- `index.ts` module wiring
+- `config.ts` strategy parameters
+- `logic.ts` state machine and portfolio overlay
+- `messages.ts` Telegram formatting
+- `strategy.md` strategy spec summary
+
+Implementation notes:
+
+- Trigger uses Bybit account-ratio (`period=1h`) + latest 1h kline volume.
+- Exits run before new entries each cycle.
+- Open positions are capped at 15.
+- Signals are skipped when the same symbol is already open (`preventDuplicateSymbolEntries=true`).
+- At capacity, a new valid signal can replace the worst position if mark return is `<= -5%`.
+- Replacement emits one alert (`ENTRY REPLACE SHORT`) containing old/new trade details.
+- `config.testing.eventDrivenTotals` keeps live totals updated from alert-flow events.
+- State is restart-safe through `exportState`/`hydrateState`.
+
+Runtime parameter overrides (env):
+
+- `ESP_V43_LEVERAGE` (default `5`)
+- `ESP_V43_TAKE_PROFIT_PCT` (default `4` or `0.04`)
+- `ESP_V43_REPLACE_LOSING_THRESHOLD_PCT` (default `5` or `0.05`)
+- `ESP_V43_MAX_HOLD_HOURS` (default `48`)
+- `ESP_V43_MAX_OPEN_POSITIONS` (default `15`)
+- `ESP_V43_PREVENT_DUPLICATE_SYMBOL_ENTRIES` (`true`/`false`, default `true`)
+- `ESP_V43_SELL_RATIO_MAX` (default `0.2`)
+- `ESP_V43_MIN_HOUR_VOLUME` (default `1000000`)

@@ -23,11 +23,15 @@ interface FundingTracker {
   phase: FundingPhase;
   inExtreme: boolean;
   extremeStartedAtMs: number | null;
+  extremeWindowStreak: number;
+  extremeStreakStartPrice: number | null;
   peakExtremeRate: number | null;
   lastExtremeSignalAtMs: number | null;
   lastNormalizationAtMs: number | null;
   lastNormalizationPrice: number | null;
   maxPriceSinceNormalization: number | null;
+  lastAlertPrice: number | null;
+  lastAlertAtMs: number | null;
   entryAtMs: number | null;
   closeDueAtMs: number | null;
   closedAtMs: number | null;
@@ -52,11 +56,15 @@ function getOrCreate(symbol: string): FundingTracker {
     phase: "WATCHING",
     inExtreme: false,
     extremeStartedAtMs: null,
+    extremeWindowStreak: 0,
+    extremeStreakStartPrice: null,
     peakExtremeRate: null,
     lastExtremeSignalAtMs: null,
     lastNormalizationAtMs: null,
     lastNormalizationPrice: null,
     maxPriceSinceNormalization: null,
+    lastAlertPrice: null,
+    lastAlertAtMs: null,
     entryAtMs: null,
     closeDueAtMs: null,
     closedAtMs: null,
@@ -69,6 +77,12 @@ function getOrCreate(symbol: string): FundingTracker {
 function pct(base: number, value: number): number {
   // Protect against divide-by-zero or invalid base values.
   if (!Number.isFinite(base) || base <= 0) return Number.POSITIVE_INFINITY;
+  return (value - base) / base;
+}
+
+function pctOrNull(base: number | null, value: number): number | null {
+  if (base === null || !Number.isFinite(base) || base <= 0) return null;
+  if (!Number.isFinite(value)) return null;
   return (value - base) / base;
 }
 
@@ -127,9 +141,7 @@ export async function evaluateFundingRuleISignals(context: StrategyContext): Pro
 
     // Auto-close READY setup when hold deadline is reached.
     if (tracker.phase === "READY" && tracker.closeDueAtMs !== null && context.nowMs >= tracker.closeDueAtMs) {
-      if (
-        transition(tracker, "CLOSED", context.nowMs, null)
-      ) {
+      if (transition(tracker, "CLOSED", context.nowMs, null)) {
         out.push({
           symbol: tracker.symbol,
           phase: tracker.phase,
@@ -138,8 +150,13 @@ export async function evaluateFundingRuleISignals(context: StrategyContext): Pro
             fundingRate: ticker.fundingRate,
             closeDueAtMs: tracker.closeDueAtMs,
             closedAtMs: tracker.closedAtMs,
+            priceChangeSinceLastNotification: pctOrNull(tracker.lastAlertPrice, ticker.lastPrice),
+            extremeWindowsInRow: Math.max(0, tracker.extremeWindowStreak),
+            priceChangeSinceFirstNotificationInStreak: pctOrNull(tracker.extremeStreakStartPrice, ticker.lastPrice),
           },
         });
+        tracker.lastAlertPrice = ticker.lastPrice;
+        tracker.lastAlertAtMs = context.nowMs;
       }
       continue;
     }
@@ -152,9 +169,14 @@ export async function evaluateFundingRuleISignals(context: StrategyContext): Pro
       if (!tracker.inExtreme) {
         tracker.inExtreme = true;
         tracker.extremeStartedAtMs = context.nowMs;
+        tracker.extremeWindowStreak = 1;
+        tracker.extremeStreakStartPrice = ticker.lastPrice;
         tracker.peakExtremeRate = ticker.fundingRate;
-      } else if (tracker.peakExtremeRate !== null) {
-        tracker.peakExtremeRate = Math.min(tracker.peakExtremeRate, ticker.fundingRate);
+      } else {
+        tracker.extremeWindowStreak += 1;
+        if (tracker.peakExtremeRate !== null) {
+          tracker.peakExtremeRate = Math.min(tracker.peakExtremeRate, ticker.fundingRate);
+        }
       }
       continue;
     }
@@ -178,6 +200,12 @@ export async function evaluateFundingRuleISignals(context: StrategyContext): Pro
 
     const pumpOk = pumpBeforeExtreme < PUMP_BEFORE_EXTREME_MAX;
     const gapOk = prevGapHours !== null && prevGapHours <= PREV_SIGNAL_GAP_MAX_HOURS;
+    const extremeWindowsInRow = Math.max(1, tracker.extremeWindowStreak);
+    const priceChangeSinceLastNotification = pctOrNull(tracker.lastAlertPrice, ticker.lastPrice);
+    const priceChangeSinceFirstNotificationInStreak = pctOrNull(
+      tracker.extremeStreakStartPrice,
+      ticker.lastPrice
+    );
 
     // Advance tracker baseline for next extreme/normalization cycle.
     tracker.lastExtremeSignalAtMs = tracker.extremeStartedAtMs ?? context.nowMs;
@@ -201,8 +229,13 @@ export async function evaluateFundingRuleISignals(context: StrategyContext): Pro
             holdHours: HOLD_HOURS,
             closeDueAtMs: tracker.closeDueAtMs,
             alertPrice: ticker.lastPrice,
+            priceChangeSinceLastNotification,
+            extremeWindowsInRow,
+            priceChangeSinceFirstNotificationInStreak,
           },
         });
+        tracker.lastAlertPrice = ticker.lastPrice;
+        tracker.lastAlertAtMs = context.nowMs;
       }
     } else {
       // Failed Rule I => mark SKIPPED with explicit reason and stop tracking.
@@ -213,6 +246,10 @@ export async function evaluateFundingRuleISignals(context: StrategyContext): Pro
         `Rule I reject: pump_before_extreme=${(pumpBeforeExtreme * 100).toFixed(2)}%, prev_gap=${prevGapHours?.toFixed(2) ?? "n/a"}h`
       );
     }
+
+    // Current extreme streak has ended at normalization.
+    tracker.extremeWindowStreak = 0;
+    tracker.extremeStreakStartPrice = null;
   }
 
   cleanup(context.nowMs);
@@ -230,7 +267,38 @@ export function hydrateFundingState(snapshot: unknown): void {
   const parsed = (snapshot as { trackers?: Record<string, FundingTracker> }).trackers;
   if (!parsed || typeof parsed !== "object") return;
   for (const [symbol, tracker] of Object.entries(parsed)) {
-    trackers[symbol] = tracker;
+    if (!tracker || typeof tracker !== "object") continue;
+    trackers[symbol] = {
+      symbol,
+      phase:
+        tracker.phase === "WATCHING" ||
+        tracker.phase === "READY" ||
+        tracker.phase === "CLOSED" ||
+        tracker.phase === "SKIPPED"
+          ? tracker.phase
+          : "WATCHING",
+      inExtreme: tracker.inExtreme === true,
+      extremeStartedAtMs: typeof tracker.extremeStartedAtMs === "number" ? tracker.extremeStartedAtMs : null,
+      extremeWindowStreak: typeof tracker.extremeWindowStreak === "number" ? tracker.extremeWindowStreak : 0,
+      extremeStreakStartPrice:
+        typeof tracker.extremeStreakStartPrice === "number" ? tracker.extremeStreakStartPrice : null,
+      peakExtremeRate: typeof tracker.peakExtremeRate === "number" ? tracker.peakExtremeRate : null,
+      lastExtremeSignalAtMs:
+        typeof tracker.lastExtremeSignalAtMs === "number" ? tracker.lastExtremeSignalAtMs : null,
+      lastNormalizationAtMs:
+        typeof tracker.lastNormalizationAtMs === "number" ? tracker.lastNormalizationAtMs : null,
+      lastNormalizationPrice:
+        typeof tracker.lastNormalizationPrice === "number" ? tracker.lastNormalizationPrice : null,
+      maxPriceSinceNormalization:
+        typeof tracker.maxPriceSinceNormalization === "number" ? tracker.maxPriceSinceNormalization : null,
+      lastAlertPrice: typeof tracker.lastAlertPrice === "number" ? tracker.lastAlertPrice : null,
+      lastAlertAtMs: typeof tracker.lastAlertAtMs === "number" ? tracker.lastAlertAtMs : null,
+      entryAtMs: typeof tracker.entryAtMs === "number" ? tracker.entryAtMs : null,
+      closeDueAtMs: typeof tracker.closeDueAtMs === "number" ? tracker.closeDueAtMs : null,
+      closedAtMs: typeof tracker.closedAtMs === "number" ? tracker.closedAtMs : null,
+      disqualificationReason:
+        typeof tracker.disqualificationReason === "string" ? tracker.disqualificationReason : null,
+    };
   }
 }
 
@@ -251,6 +319,10 @@ export function listFundingTrackedSetups(): StrategyTrackedSetup[] {
       closeDueAtMs: tracker.closeDueAtMs,
       entryAtMs: tracker.entryAtMs,
       closedAtMs: tracker.closedAtMs,
+      extremeWindowStreak: tracker.extremeWindowStreak,
+      extremeStreakStartPrice: tracker.extremeStreakStartPrice,
+      lastAlertPrice: tracker.lastAlertPrice,
+      lastAlertAtMs: tracker.lastAlertAtMs,
       disqualificationReason: tracker.disqualificationReason,
     },
     updatedAtMs:

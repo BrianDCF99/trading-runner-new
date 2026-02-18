@@ -2,6 +2,7 @@
  * Funding Rule I strategy message formatter.
  */
 import type { StrategySignal } from "../../core/domain/types.js";
+import { formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
 
 function fmtPercent(value: unknown): string {
   // Render percentages consistently and guard invalid values.
@@ -22,6 +23,18 @@ function fmtHoursToClose(closeDueAtMs: unknown, nowMs: number): string {
   return `${hours.toFixed(2)}h`;
 }
 
+function fmtSignedPercent(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  const pct = value * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
+function fmtWindows(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return `${Math.max(0, Math.floor(value))}`;
+}
+
 export function formatFundingMessages(signals: StrategySignal[]): string[] {
   const out: string[] = [];
   for (const signal of signals) {
@@ -30,9 +43,12 @@ export function formatFundingMessages(signals: StrategySignal[]): string[] {
       out.push(
         [
           `💸 <b>READY</b>`,
-          `<b>${signal.symbol}</b>`,
+          formatSymbolLink("bybit", signal.symbol),
           `Funding: ${fmtPercent(signal.data.fundingRate)}`,
           `Alert Price: ${fmtPrice(signal.data.alertPrice)}`,
+          `Δ Since Last Alert: ${fmtSignedPercent(signal.data.priceChangeSinceLastNotification)}`,
+          `Extreme Windows In Row: ${fmtWindows(signal.data.extremeWindowsInRow)}`,
+          `Δ Since Streak Start: ${fmtSignedPercent(signal.data.priceChangeSinceFirstNotificationInStreak)}`,
           `Time To Close: ${fmtHoursToClose(signal.data.closeDueAtMs, signal.generatedAtMs)}`,
           `Strategy: ${signal.strategyName}`,
         ].join("\n")
@@ -45,8 +61,11 @@ export function formatFundingMessages(signals: StrategySignal[]): string[] {
       out.push(
         [
           `✅ <b>CLOSED</b>`,
-          `<b>${signal.symbol}</b>`,
+          formatSymbolLink("bybit", signal.symbol),
           `Funding: ${fmtPercent(signal.data.fundingRate)}`,
+          `Δ Since Last Alert: ${fmtSignedPercent(signal.data.priceChangeSinceLastNotification)}`,
+          `Extreme Windows In Row: ${fmtWindows(signal.data.extremeWindowsInRow)}`,
+          `Δ Since Streak Start: ${fmtSignedPercent(signal.data.priceChangeSinceFirstNotificationInStreak)}`,
           `Strategy: ${signal.strategyName}`,
         ].join("\n")
       );

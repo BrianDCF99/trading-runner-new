@@ -36,11 +36,18 @@ export interface Kline1h {
   turnover: number;
 }
 
+export interface SellRatio1hSnapshot {
+  symbol: string;
+  sellRatio: number | null;
+  timestampMs: number | null;
+}
+
 export interface StrategyContext {
   nowMs: number;
   tickers: BybitTicker[];
   instruments: BybitInstrument[];
   getKlines1h(symbol: string, limit: number): Promise<Kline1h[]>;
+  getSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot>;
 }
 
 export interface StrategySignal {

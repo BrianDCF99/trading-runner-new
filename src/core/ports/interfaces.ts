@@ -16,6 +16,7 @@ import type {
   RunnerStatusSnapshot,
   RunnerTrigger,
   RuntimeSetupSnapshot,
+  SellRatio1hSnapshot,
   SetupEventRecord,
   StrategyConfigSnapshot,
   StrategyModule,
@@ -32,6 +33,7 @@ export interface MarketDataPort {
   getTickers(): Promise<BybitTicker[]>;
   getInstruments(): Promise<BybitInstrument[]>;
   getKlines1h(symbol: string, limit: number): Promise<Kline1h[]>;
+  getSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot>;
 }
 
 export interface InlineKeyboardButton {
@@ -101,5 +103,5 @@ export interface StrategyLoaderPort {
 export interface RunnerPort {
   start(): Promise<void>;
   runOnce(trigger: RunnerTrigger): Promise<CycleRunResult>;
-  getWatchingSnapshot(kind: "new" | "funding" | "long25" | "extremeFunding"): Promise<string>;
+  getWatchingSnapshot(kind: "new" | "funding" | "long25" | "extremeFunding" | "sellPressure"): Promise<string>;
 }
