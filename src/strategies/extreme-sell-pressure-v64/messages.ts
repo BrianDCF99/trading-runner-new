@@ -1,5 +1,5 @@
 /**
- * Extreme sell-pressure v4.3 message formatter.
+ * Extreme sell-pressure v6.4 message formatter.
  */
 import type { StrategySignal } from "../../core/domain/types.js";
 import { escapeHtml, formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
@@ -10,7 +10,7 @@ type ExtremeSellPressureEventType =
   | "EXIT_TP"
   | "EXIT_TIME"
   | "EXIT_LIQUIDATED"
-  | "EXIT_REPLACE_STOP_40";
+  | "EXIT_REPLACE_STOP";
 
 interface TotalsPayload {
   entries: number;
@@ -31,7 +31,7 @@ function readEventType(signal: StrategySignal): ExtremeSellPressureEventType | n
     raw === "EXIT_TP" ||
     raw === "EXIT_TIME" ||
     raw === "EXIT_LIQUIDATED" ||
-    raw === "EXIT_REPLACE_STOP_40"
+    raw === "EXIT_REPLACE_STOP"
   ) {
     return raw;
   }
@@ -175,7 +175,7 @@ function formatExitMessage(signal: StrategySignal): string {
   ].join("\n");
 }
 
-export function formatExtremeSellPressureV43Messages(signals: StrategySignal[]): string[] {
+export function formatExtremeSellPressureV64Messages(signals: StrategySignal[]): string[] {
   const out: string[] = [];
   for (const signal of signals) {
     const eventType = readEventType(signal);
@@ -192,7 +192,7 @@ export function formatExtremeSellPressureV43Messages(signals: StrategySignal[]):
     }
 
     // Replacement close is intentionally silent.
-    if (eventType === "EXIT_REPLACE_STOP_40") {
+    if (eventType === "EXIT_REPLACE_STOP") {
       continue;
     }
 

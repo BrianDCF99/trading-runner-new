@@ -1,15 +1,15 @@
 /**
- * Extreme sell-pressure v4.3 strategy logic.
+ * Extreme sell-pressure v6.4 strategy logic.
  *
- * Live adaptation of the v4.3 research rules:
+ * Live adaptation of the v6.4 research rules:
  * - trigger: sell_ratio <= 0.20 and latest 1h candle volume >= 1,000,000
  * - short entries only
- * - tp-only (5%), leverage 5x, max hold 48h
+ * - tp-only (4%), leverage 5x, max hold 48h
  * - max 15 open positions
  * - if at capacity, replace worst mark-return position when mark return <= -5%
  */
 import type { BybitTicker, Kline1h, StrategyContext, StrategyTrackedSetup } from "../../core/domain/types.js";
-import { EXTREME_SELL_PRESSURE_V43_CONFIG } from "./config.js";
+import { EXTREME_SELL_PRESSURE_V64_CONFIG } from "./config.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const ENTRY_SCORE = 100;
@@ -23,12 +23,12 @@ type ExtremeSellPressureEventType =
   | "EXIT_TP"
   | "EXIT_TIME"
   | "EXIT_LIQUIDATED"
-  | "EXIT_REPLACE_STOP_40";
+  | "EXIT_REPLACE_STOP";
 
 type EntryEventType = Extract<ExtremeSellPressureEventType, "ENTRY_OPEN_SHORT" | "ENTRY_REPLACE_OPEN_SHORT">;
 type CloseEventType = Extract<
   ExtremeSellPressureEventType,
-  "EXIT_TP" | "EXIT_TIME" | "EXIT_LIQUIDATED" | "EXIT_REPLACE_STOP_40"
+  "EXIT_TP" | "EXIT_TIME" | "EXIT_LIQUIDATED" | "EXIT_REPLACE_STOP"
 >;
 
 interface OpenPosition {
@@ -89,12 +89,12 @@ interface TotalsSnapshot {
 }
 
 interface CloseResult {
-  signal: ExtremeSellPressureV43InternalSignal;
+  signal: ExtremeSellPressureV64InternalSignal;
   eventType: CloseEventType;
   leveragedReturnPct: number;
 }
 
-export interface ExtremeSellPressureV43InternalSignal {
+export interface ExtremeSellPressureV64InternalSignal {
   symbol: string;
   phase: ExtremeSellPressurePhase;
   score: number;
@@ -252,7 +252,7 @@ function buildTotalsSnapshot(): TotalsSnapshot {
   };
 }
 
-function withTotals(signal: ExtremeSellPressureV43InternalSignal): ExtremeSellPressureV43InternalSignal {
+function withTotals(signal: ExtremeSellPressureV64InternalSignal): ExtremeSellPressureV64InternalSignal {
   return {
     ...signal,
     data: {
@@ -263,7 +263,7 @@ function withTotals(signal: ExtremeSellPressureV43InternalSignal): ExtremeSellPr
 }
 
 function applyEntryToSummary(eventType: EntryEventType): void {
-  if (!EXTREME_SELL_PRESSURE_V43_CONFIG.testing.eventDrivenTotals) return;
+  if (!EXTREME_SELL_PRESSURE_V64_CONFIG.testing.eventDrivenTotals) return;
   summaryStats.entries += 1;
   if (eventType === "ENTRY_REPLACE_OPEN_SHORT") {
     summaryStats.replaced += 1;
@@ -271,7 +271,7 @@ function applyEntryToSummary(eventType: EntryEventType): void {
 }
 
 function applyCloseToSummary(close: CloseResult): void {
-  if (!EXTREME_SELL_PRESSURE_V43_CONFIG.testing.eventDrivenTotals) return;
+  if (!EXTREME_SELL_PRESSURE_V64_CONFIG.testing.eventDrivenTotals) return;
   summaryStats.realizedPnlPct += close.leveragedReturnPct;
   if (close.eventType === "EXIT_LIQUIDATED") {
     summaryStats.liquidated += 1;
@@ -285,7 +285,7 @@ function applyCloseToSummary(close: CloseResult): void {
 }
 
 function recordMissedTrade(): void {
-  if (!EXTREME_SELL_PRESSURE_V43_CONFIG.testing.eventDrivenTotals) return;
+  if (!EXTREME_SELL_PRESSURE_V64_CONFIG.testing.eventDrivenTotals) return;
   summaryStats.missedTrades += 1;
 }
 
@@ -349,12 +349,12 @@ function openPosition(input: {
   nowMs: number;
   eventType: EntryEventType;
   extraData?: Record<string, unknown>;
-}): ExtremeSellPressureV43InternalSignal {
+}): ExtremeSellPressureV64InternalSignal {
   const { candidate, nowMs, eventType, extraData } = input;
   const positionId = nextPositionId;
   const positionKey = `p${positionId}`;
-  const leverage = EXTREME_SELL_PRESSURE_V43_CONFIG.entry.leverage;
-  const takeProfitPct = EXTREME_SELL_PRESSURE_V43_CONFIG.entry.takeProfitPct;
+  const leverage = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.leverage;
+  const takeProfitPct = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.takeProfitPct;
   const takeProfitPrice = candidate.entryPrice * (1 - takeProfitPct);
 
   const position: OpenPosition = {
@@ -365,7 +365,7 @@ function openPosition(input: {
     entryPrice: candidate.entryPrice,
     leverage,
     takeProfitPct,
-    maxHoldAtMs: nowMs + EXTREME_SELL_PRESSURE_V43_CONFIG.entry.maxHoldHours * HOUR_MS,
+    maxHoldAtMs: nowMs + EXTREME_SELL_PRESSURE_V64_CONFIG.entry.maxHoldHours * HOUR_MS,
     sellRatioAtEntry: candidate.sellRatio,
     eventVolumeAtEntry: candidate.hourVolume,
     sellRatioTimestampMs: candidate.sellRatioTimestampMs,
@@ -391,12 +391,12 @@ function openPosition(input: {
       takeProfitPrice,
       leverage: position.leverage,
       takeProfitPct: toPercent(position.takeProfitPct),
-      maxHoldHours: EXTREME_SELL_PRESSURE_V43_CONFIG.entry.maxHoldHours,
+      maxHoldHours: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.maxHoldHours,
       sellRatio: position.sellRatioAtEntry,
       hourVolume: position.eventVolumeAtEntry,
       sellRatioTimestampMs: position.sellRatioTimestampMs,
-      sellRatioThreshold: EXTREME_SELL_PRESSURE_V43_CONFIG.entry.sellRatioMax,
-      volumeThreshold: EXTREME_SELL_PRESSURE_V43_CONFIG.entry.minHourVolume,
+      sellRatioThreshold: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.sellRatioMax,
+      volumeThreshold: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.minHourVolume,
       openPositions: listOpenPositions().length,
       ...extraData,
     },
@@ -404,7 +404,7 @@ function openPosition(input: {
 }
 
 function cleanupSymbolState(nowMs: number, activeSymbols: Set<string>): void {
-  const retentionMs = EXTREME_SELL_PRESSURE_V43_CONFIG.retention.closedSignalRetentionHours * HOUR_MS;
+  const retentionMs = EXTREME_SELL_PRESSURE_V64_CONFIG.retention.closedSignalRetentionHours * HOUR_MS;
   const openSymbols = new Set(listOpenPositions().map((position) => position.symbol));
   for (const [symbol, state] of Object.entries(symbolStates)) {
     const isOpen = openSymbols.has(symbol);
@@ -426,7 +426,7 @@ function selectReplacementCandidate(input: {
   tickerBySymbol: Map<string, BybitTicker>;
 }): { positionKey: string; symbol: string; markPrice: number; markReturnPct: number } | null {
   const { nowMs, tickerBySymbol } = input;
-  const thresholdPct = -toPercent(EXTREME_SELL_PRESSURE_V43_CONFIG.portfolio.replaceLosingThresholdPct);
+  const thresholdPct = -toPercent(EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.replaceLosingThresholdPct);
   let chosen: { positionKey: string; symbol: string; markPrice: number; markReturnPct: number } | null = null;
 
   for (const position of listOpenPositions()) {
@@ -528,12 +528,12 @@ async function evaluateEntryCandidate(input: {
     ) {
       return null;
     }
-    if (sellRatio > EXTREME_SELL_PRESSURE_V43_CONFIG.entry.sellRatioMax) return null;
+    if (sellRatio > EXTREME_SELL_PRESSURE_V64_CONFIG.entry.sellRatioMax) return null;
 
-    const candles = await context.getKlines1h(symbol, EXTREME_SELL_PRESSURE_V43_CONFIG.market.klineLookbackHours);
+    const candles = await context.getKlines1h(symbol, EXTREME_SELL_PRESSURE_V64_CONFIG.market.klineLookbackHours);
     const hourVolume = readLatestHourVolume(candles);
     state.lastObservedHourVolume = hourVolume;
-    if (hourVolume === null || hourVolume < EXTREME_SELL_PRESSURE_V43_CONFIG.entry.minHourVolume) {
+    if (hourVolume === null || hourVolume < EXTREME_SELL_PRESSURE_V64_CONFIG.entry.minHourVolume) {
       return null;
     }
 
@@ -573,10 +573,10 @@ function sortedEligibleSymbols(context: StrategyContext): string[] {
   return tickers.map((ticker) => ticker.symbol);
 }
 
-export async function evaluateExtremeSellPressureV43Signals(
+export async function evaluateExtremeSellPressureV64Signals(
   context: StrategyContext
-): Promise<ExtremeSellPressureV43InternalSignal[]> {
-  const out: ExtremeSellPressureV43InternalSignal[] = [];
+): Promise<ExtremeSellPressureV64InternalSignal[]> {
+  const out: ExtremeSellPressureV64InternalSignal[] = [];
   const tickerBySymbol = new Map(context.tickers.map((ticker) => [ticker.symbol, ticker]));
 
   const naturalExits = processNaturalExits(context, tickerBySymbol);
@@ -588,7 +588,7 @@ export async function evaluateExtremeSellPressureV43Signals(
   const eligibleSymbols = sortedEligibleSymbols(context);
   const scanSymbols = selectScanBatch(
     eligibleSymbols,
-    EXTREME_SELL_PRESSURE_V43_CONFIG.market.sellRatioScanBatchSize
+    EXTREME_SELL_PRESSURE_V64_CONFIG.market.sellRatioScanBatchSize
   );
 
   const candidatesRaw = await mapWithConcurrency(scanSymbols, SELL_RATIO_CONCURRENCY, (symbol) =>
@@ -603,7 +603,7 @@ export async function evaluateExtremeSellPressureV43Signals(
   for (const candidate of candidates) {
     markProcessedSellRatio(candidate.symbol, candidate.sellRatioTimestampMs, context.nowMs);
 
-    if (EXTREME_SELL_PRESSURE_V43_CONFIG.portfolio.preventDuplicateSymbolEntries) {
+    if (EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.preventDuplicateSymbolEntries) {
       const symbolAlreadyOpen = listOpenPositions().some((position) => position.symbol === candidate.symbol);
       if (symbolAlreadyOpen) {
         recordMissedTrade();
@@ -612,7 +612,7 @@ export async function evaluateExtremeSellPressureV43Signals(
     }
 
     const openCount = listOpenPositions().length;
-    if (openCount < EXTREME_SELL_PRESSURE_V43_CONFIG.portfolio.maxOpenPositions) {
+    if (openCount < EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.maxOpenPositions) {
       const entry = openPosition({
         candidate,
         nowMs: context.nowMs,
@@ -638,10 +638,10 @@ export async function evaluateExtremeSellPressureV43Signals(
     const replacementClose = closePosition({
       position: victim,
       nowMs: context.nowMs,
-      eventType: "EXIT_REPLACE_STOP_40",
+      eventType: "EXIT_REPLACE_STOP",
       markPrice: replacement.markPrice,
       forcedLeveredReturnPct: -toPercent(
-        EXTREME_SELL_PRESSURE_V43_CONFIG.portfolio.replaceLosingThresholdPct
+        EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.replaceLosingThresholdPct
       ),
       extraData: {
         markReturnAtReplacementPct: replacement.markReturnPct,
@@ -676,11 +676,11 @@ export async function evaluateExtremeSellPressureV43Signals(
   return out;
 }
 
-export function listExtremeSellPressureV43TrackedSetups(): StrategyTrackedSetup[] {
+export function listExtremeSellPressureV64TrackedSetups(): StrategyTrackedSetup[] {
   return listOpenPositions().map((position) => ({
-    key: `bybit:extreme-sell-pressure:v43:${position.positionId}`,
-    strategyId: EXTREME_SELL_PRESSURE_V43_CONFIG.strategyId,
-    strategyName: EXTREME_SELL_PRESSURE_V43_CONFIG.strategyName,
+    key: `${EXTREME_SELL_PRESSURE_V64_CONFIG.strategyId}:${position.positionId}`,
+    strategyId: EXTREME_SELL_PRESSURE_V64_CONFIG.strategyId,
+    strategyName: EXTREME_SELL_PRESSURE_V64_CONFIG.strategyName,
     symbol: position.symbol,
     phase: "OPEN_SHORT",
     isReady: false,
@@ -706,7 +706,7 @@ export function listExtremeSellPressureV43TrackedSetups(): StrategyTrackedSetup[
   }));
 }
 
-export function exportExtremeSellPressureV43State(): Record<string, unknown> {
+export function exportExtremeSellPressureV64State(): Record<string, unknown> {
   return {
     openPositions,
     symbolStates,
@@ -717,7 +717,7 @@ export function exportExtremeSellPressureV43State(): Record<string, unknown> {
   };
 }
 
-export function hydrateExtremeSellPressureV43State(snapshot: unknown): void {
+export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
   if (!snapshot || typeof snapshot !== "object") return;
   const typed = snapshot as {
     openPositions?: Record<string, Partial<OpenPosition>>;

@@ -1,6 +1,6 @@
-# extreme-sell-pressure-v43
+# extreme-sell-pressure-v64
 
-Live strategy module for the V4.3 position-cap variant of the extreme sell-pressure event.
+Live strategy module for the V6.4 core extreme sell-pressure winner profile.
 
 Folder contract:
 
@@ -23,11 +23,13 @@ Implementation notes:
 
 Runtime parameter overrides (env):
 
-- `ESP_V43_LEVERAGE` (default `5`)
-- `ESP_V43_TAKE_PROFIT_PCT` (default `4` or `0.04`)
-- `ESP_V43_REPLACE_LOSING_THRESHOLD_PCT` (default `5` or `0.05`)
-- `ESP_V43_MAX_HOLD_HOURS` (default `48`)
-- `ESP_V43_MAX_OPEN_POSITIONS` (default `15`)
-- `ESP_V43_PREVENT_DUPLICATE_SYMBOL_ENTRIES` (`true`/`false`, default `true`)
-- `ESP_V43_SELL_RATIO_MAX` (default `0.2`)
-- `ESP_V43_MIN_HOUR_VOLUME` (default `1000000`)
+- `ESP_V64_LEVERAGE` (default `5`)
+- `ESP_V64_TAKE_PROFIT_PCT` (default `4` or `0.04`)
+- `ESP_V64_REPLACE_LOSING_THRESHOLD_PCT` (default `5` or `0.05`)
+- `ESP_V64_MAX_HOLD_HOURS` (default `48`)
+- `ESP_V64_MAX_OPEN_POSITIONS` (default `15`)
+- `ESP_V64_PREVENT_DUPLICATE_SYMBOL_ENTRIES` (`true`/`false`, default `true`)
+- `ESP_V64_SELL_RATIO_MAX` (default `0.2`)
+- `ESP_V64_MIN_HOUR_VOLUME` (default `1000000`)
+
+Legacy env names (`ESP_V43_*`) are still accepted as fallbacks for migration safety.

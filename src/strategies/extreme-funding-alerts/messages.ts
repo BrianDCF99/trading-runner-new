@@ -21,9 +21,16 @@ function fmtSignedPercent(value: unknown): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
-function fmtWindows(value: unknown): string {
+function fmtStreak(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
   return `${Math.max(0, Math.floor(value))}`;
+}
+
+function resolveStreak(signal: StrategySignal): unknown {
+  if (typeof signal.data.extremeStreak === "number" && Number.isFinite(signal.data.extremeStreak)) {
+    return signal.data.extremeStreak;
+  }
+  return signal.data.extremeWindowsInRow;
 }
 
 function toHourClock(totalMinutes: number): string {
@@ -59,7 +66,7 @@ export function formatExtremeFundingMessages(signals: StrategySignal[]): string[
         `Settlement: ${resolveSettlementLabel(signal)}`,
         `Alert Price: ${fmtPrice(signal.data.alertPrice)}`,
         `Δ Since Last Alert: ${fmtSignedPercent(signal.data.priceChangeSinceLastNotification)}`,
-        `Extreme Windows In Row: ${fmtWindows(signal.data.extremeWindowsInRow)}`,
+        `Extreme Streak: ${fmtStreak(resolveStreak(signal))}`,
         `Δ Since Streak Start: ${fmtSignedPercent(signal.data.priceChangeSinceFirstNotificationInStreak)}`,
         `Mark Price: ${fmtPrice(signal.data.markPrice)}`,
         `Strategy: ${signal.strategyName}`,

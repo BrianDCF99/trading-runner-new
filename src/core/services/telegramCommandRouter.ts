@@ -60,6 +60,7 @@ function resolveWatchingKind(token?: string): "new" | "funding" | "long25" | "ex
     "sellpressure",
     "sell-pressure",
     "sell_pressure",
+    "v64",
     "v43",
   ]);
   if (newAliases.has(normalized)) return "new";
@@ -118,6 +119,8 @@ function resolveNextAlertLabel(setup: RuntimeSetupSnapshot): string {
   }
 
   if (
+    setup.strategyId === "bybit:extreme-sell-pressure:v64" ||
+    setup.strategyId === "bybit:extreme-sell-pressure-suite:v64" ||
     setup.strategyId === "bybit:extreme-sell-pressure:v43" ||
     setup.strategyId === "bybit:extreme-sell-pressure-suite:v43"
   ) {
@@ -248,6 +251,7 @@ export class TelegramCommandRouter {
       case "sellpressure":
       case "sell_pressure":
       case "sell-pressure":
+      case "v64":
       case "v43": {
         const text = await this.options.runner.getWatchingSnapshot("sellPressure");
         await this.options.notifier.sendMessage(text, { chatId: command.chatId });

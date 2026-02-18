@@ -125,7 +125,7 @@ function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupS
   const symbolLink = formatSymbolLink(exchange, setup.symbol);
   const fundingRate = readNumericPayload(setup.payload, "fundingRate");
   const fundingIntervalMinutes = readNumericPayload(setup.payload, "fundingIntervalMinutes");
-  const extremeWindowsInRow = readNumericPayload(setup.payload, "extremeWindowsInRow");
+  const extremeStreak = readNumericPayload(setup.payload, "extremeStreak") ?? readNumericPayload(setup.payload, "extremeWindowsInRow");
   const priceChangeSinceLastNotification = readNumericPayload(setup.payload, "priceChangeSinceLastNotification");
   const priceChangeSinceFirstNotificationInStreak = readNumericPayload(
     setup.payload,
@@ -140,7 +140,7 @@ function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupS
         ? payloadSettlement.trim()
         : "unknown";
   const streakLabel =
-    extremeWindowsInRow === null ? "n/a" : `${Math.max(0, Math.floor(extremeWindowsInRow))}`;
+    extremeStreak === null ? "n/a" : `${Math.max(0, Math.floor(extremeStreak))}`;
   return `${symbolLink} | ${formatPercent(fundingRate)} | ${escapeHtml(settlementLabel)} | streak ${streakLabel} | ${formatSignedPercent(priceChangeSinceLastNotification)} | ${formatSignedPercent(priceChangeSinceFirstNotificationInStreak)}`;
 }
 
@@ -335,7 +335,14 @@ export class RunnerService implements RunnerPort {
 
         const lines = strategy.formatSignals(signals);
         if (lines.length > 0) {
-          await this.options.notifier.notify(lines);
+          const sent = await this.options.notifier.notify(lines);
+          if (sent < lines.length) {
+            this.options.logger.warn("Telegram alert delivery mismatch", {
+              strategyId: strategy.id,
+              expectedMessages: lines.length,
+              sentMessages: sent,
+            });
+          }
         }
       }
 
@@ -500,12 +507,14 @@ export class RunnerService implements RunnerPort {
               }
             : kind === "sellPressure"
               ? {
-                  title: "Bybit Extreme Sell Pressure v4.3",
+                  title: "Bybit Extreme Sell Pressure v6.4",
                   strategyIds: [
+                    "bybit:extreme-sell-pressure-suite:v64",
+                    "bybit:extreme-sell-pressure:v64",
                     "bybit:extreme-sell-pressure-suite:v43",
                     "bybit:extreme-sell-pressure:v43",
                   ],
-                  sections: [{ label: "OPEN_SHORT", phases: ["OPEN_SHORT"] }],
+                  sections: [{ label: "OPEN SHORT", phases: ["OPEN_SHORT"] }],
                   subtitle: "📉 <b>Open Positions</b>",
                 }
             : {
@@ -530,6 +539,10 @@ export class RunnerService implements RunnerPort {
       catalog.subtitle,
       "",
     ];
+    if (kind === "sellPressure") {
+      lines.push("<b>Ticker | PnL % Since Entry | Time Since Entry (h:mm)</b>");
+      lines.push("");
+    }
     const nowMs = Date.now();
     let renderedSectionCount = 0;
 
@@ -562,10 +575,14 @@ export class RunnerService implements RunnerPort {
         }
         if (kind === "sellPressure") {
           const entryAtMs = readNumericPayload(setup.payload, "entryAtMs");
-          const markMovePct = readNumericPayload(setup.payload, "markMovePct");
+          const markReturnPct = readNumericPayload(setup.payload, "markReturnPct");
+          // Fallback for older snapshots that only had unlevered move persisted.
+          const legacyMarkMovePct = readNumericPayload(setup.payload, "markMovePct");
+          const effectivePnlPct = markReturnPct ?? legacyMarkMovePct;
           const held = formatElapsed(entryAtMs, nowMs);
-          const moveText = markMovePct === null ? "n/a" : `${markMovePct > 0 ? "+" : ""}${markMovePct.toFixed(2)}%`;
-          lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)} | ${moveText} | ${held}`);
+          const pnlText =
+            effectivePnlPct === null ? "n/a" : `${effectivePnlPct > 0 ? "+" : ""}${effectivePnlPct.toFixed(2)}%`;
+          lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)} | ${pnlText} | ${held}`);
           continue;
         }
         lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)}`);
@@ -802,8 +819,12 @@ export class RunnerService implements RunnerPort {
   } {
     const module = this.options.strategies.find(
       (strategy) =>
+        strategy.id === "bybit:extreme-sell-pressure-suite:v64" ||
         strategy.id === "bybit:extreme-sell-pressure-suite:v43" ||
-        (strategy.strategyIds ? strategy.strategyIds.includes("bybit:extreme-sell-pressure:v43") : false)
+        (strategy.strategyIds
+          ? strategy.strategyIds.includes("bybit:extreme-sell-pressure:v64") ||
+            strategy.strategyIds.includes("bybit:extreme-sell-pressure:v43")
+          : false)
     );
     if (!module?.exportState) {
       return {
