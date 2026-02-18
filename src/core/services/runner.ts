@@ -543,7 +543,7 @@ export class RunnerService implements RunnerPort {
       "",
     ];
     if (kind === "sellPressure") {
-      lines.push("<b>Ticker | PnL % Since Entry | Time Since Entry (h:mm)</b>");
+      lines.push("<b>Ticker | Price at alert | pnl% | time since alert</b>");
       lines.push("");
     }
     const nowMs = Date.now();
@@ -577,15 +577,17 @@ export class RunnerService implements RunnerPort {
           continue;
         }
         if (kind === "sellPressure") {
+          const entryPrice = readNumericPayload(setup.payload, "entryPrice");
           const entryAtMs = readNumericPayload(setup.payload, "entryAtMs");
           const markReturnPct = readNumericPayload(setup.payload, "markReturnPct");
           // Fallback for older snapshots that only had unlevered move persisted.
           const legacyMarkMovePct = readNumericPayload(setup.payload, "markMovePct");
           const effectivePnlPct = markReturnPct ?? legacyMarkMovePct;
           const held = formatElapsed(entryAtMs, nowMs);
+          const entryPriceText = entryPrice === null ? "n/a" : `$${entryPrice.toLocaleString("en-US", { maximumFractionDigits: 8 })}`;
           const pnlText =
             effectivePnlPct === null ? "n/a" : `${effectivePnlPct > 0 ? "+" : ""}${effectivePnlPct.toFixed(2)}%`;
-          lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)} | ${pnlText} | ${held}`);
+          lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)} | ${entryPriceText} | ${pnlText} | ${held}`);
           continue;
         }
         lines.push(`${index + 1}. ${formatSymbolLink(this.options.exchange, setup.symbol)}`);

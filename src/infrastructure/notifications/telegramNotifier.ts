@@ -58,11 +58,11 @@ export class TelegramNotifier implements NotifierPort {
   constructor(private readonly options: TelegramNotifierOptions) {}
 
   get enabled(): boolean {
-    return Boolean(this.options.enabled && this.options.botToken && this.options.chatId);
+    return Boolean(this.options.enabled && this.options.botToken);
   }
 
   async notify(lines: string[]): Promise<number> {
-    if (!this.enabled) return 0;
+    if (!this.enabled || !this.options.chatId) return 0;
 
     let sent = 0;
     for (const line of lines) {
