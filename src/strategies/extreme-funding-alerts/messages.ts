@@ -14,6 +14,18 @@ function fmtPrice(value: unknown): string {
   return value.toLocaleString("en-US", { maximumFractionDigits: 8 });
 }
 
+function fmtSignedPercent(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  const pct = value * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
+}
+
+function fmtWindows(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return `${Math.max(0, Math.floor(value))}`;
+}
+
 function toHourClock(totalMinutes: number): string {
   const roundedMinutes = Math.max(0, Math.floor(totalMinutes));
   const hours = Math.floor(roundedMinutes / 60);
@@ -45,6 +57,10 @@ export function formatExtremeFundingMessages(signals: StrategySignal[]): string[
         formatSymbolLink("bybit", signal.symbol),
         `Funding: ${fmtPercent(signal.data.fundingRate)}`,
         `Settlement: ${resolveSettlementLabel(signal)}`,
+        `Alert Price: ${fmtPrice(signal.data.alertPrice)}`,
+        `Δ Since Last Alert: ${fmtSignedPercent(signal.data.priceChangeSinceLastNotification)}`,
+        `Extreme Windows In Row: ${fmtWindows(signal.data.extremeWindowsInRow)}`,
+        `Δ Since Streak Start: ${fmtSignedPercent(signal.data.priceChangeSinceFirstNotificationInStreak)}`,
         `Mark Price: ${fmtPrice(signal.data.markPrice)}`,
         `Strategy: ${signal.strategyName}`,
       ].join("\n")

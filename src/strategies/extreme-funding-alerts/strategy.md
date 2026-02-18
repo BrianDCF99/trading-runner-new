@@ -9,6 +9,6 @@ Rule:
 
 Alert behavior:
 
-- Emit one Telegram alert when a symbol newly breaches its threshold.
-- Keep symbol tracked while it remains extreme.
+- Emit a Telegram alert when a symbol newly breaches its threshold.
+- While still extreme, emit one follow-up alert each time a new funding window starts.
 - Remove tracking once funding normalizes above threshold.

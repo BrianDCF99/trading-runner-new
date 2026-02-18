@@ -125,6 +125,12 @@ function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupS
   const symbolLink = formatSymbolLink(exchange, setup.symbol);
   const fundingRate = readNumericPayload(setup.payload, "fundingRate");
   const fundingIntervalMinutes = readNumericPayload(setup.payload, "fundingIntervalMinutes");
+  const extremeWindowsInRow = readNumericPayload(setup.payload, "extremeWindowsInRow");
+  const priceChangeSinceLastNotification = readNumericPayload(setup.payload, "priceChangeSinceLastNotification");
+  const priceChangeSinceFirstNotificationInStreak = readNumericPayload(
+    setup.payload,
+    "priceChangeSinceFirstNotificationInStreak"
+  );
   const payloadSettlement = setup.payload.settlementLabel;
   const intervalLabel = formatFundingIntervalLabel(fundingIntervalMinutes);
   const settlementLabel =
@@ -133,7 +139,9 @@ function formatExtremeFundingSnapshotRow(exchange: "bybit", setup: RuntimeSetupS
       : typeof payloadSettlement === "string" && payloadSettlement.trim().length > 0
         ? payloadSettlement.trim()
         : "unknown";
-  return `${symbolLink} | ${formatPercent(fundingRate)} | ${escapeHtml(settlementLabel)}`;
+  const streakLabel =
+    extremeWindowsInRow === null ? "n/a" : `${Math.max(0, Math.floor(extremeWindowsInRow))}`;
+  return `${symbolLink} | ${formatPercent(fundingRate)} | ${escapeHtml(settlementLabel)} | streak ${streakLabel} | ${formatSignedPercent(priceChangeSinceLastNotification)} | ${formatSignedPercent(priceChangeSinceFirstNotificationInStreak)}`;
 }
 
 function formatNewListingSnapshotRow(exchange: "bybit", sectionLabel: string, setup: RuntimeSetupSnapshot, nowMs: number): string {

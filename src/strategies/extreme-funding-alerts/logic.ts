@@ -17,6 +17,12 @@ interface ExtremeFundingTracker {
   fundingIntervalMinutes: number | null;
   settlementLabel: string;
   triggeredAtMs: number;
+  lastPrice: number | null;
+  lastAlertPrice: number | null;
+  lastAlertAtMs: number | null;
+  extremeWindowsInRow: number;
+  extremeStreakStartPrice: number | null;
+  lastFundingWindowKey: number | null;
 }
 
 export interface ExtremeFundingInternalSignal {
@@ -55,6 +61,17 @@ function isExtremeFunding(fundingRate: number, threshold: number): boolean {
   return fundingRate <= threshold;
 }
 
+function normalizeFundingWindowKey(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return Math.floor(value);
+}
+
+function pctOrNull(base: number | null, value: number | null): number | null {
+  if (base === null || !Number.isFinite(base) || base <= 0) return null;
+  if (value === null || !Number.isFinite(value)) return null;
+  return (value - base) / base;
+}
+
 export async function evaluateExtremeFundingSignals(context: StrategyContext): Promise<ExtremeFundingInternalSignal[]> {
   const out: ExtremeFundingInternalSignal[] = [];
   const intervalBySymbol = new Map(
@@ -68,6 +85,7 @@ export async function evaluateExtremeFundingSignals(context: StrategyContext): P
     const fundingIntervalMinutes = intervalBySymbol.get(ticker.symbol) ?? null;
     const threshold = resolveThreshold(fundingIntervalMinutes);
     const settlementLabel = resolveSettlementLabel(fundingIntervalMinutes);
+    const fundingWindowKey = normalizeFundingWindowKey(ticker.nextFundingTimeMs);
     const currentlyExtreme = isExtremeFunding(ticker.fundingRate, threshold);
     const existing = trackers[ticker.symbol];
 
@@ -80,6 +98,12 @@ export async function evaluateExtremeFundingSignals(context: StrategyContext): P
           fundingIntervalMinutes,
           settlementLabel,
           triggeredAtMs: context.nowMs,
+          lastPrice: ticker.lastPrice,
+          lastAlertPrice: ticker.lastPrice,
+          lastAlertAtMs: context.nowMs,
+          extremeWindowsInRow: 1,
+          extremeStreakStartPrice: ticker.lastPrice,
+          lastFundingWindowKey: fundingWindowKey,
         };
         trackers[ticker.symbol] = created;
 
@@ -97,6 +121,10 @@ export async function evaluateExtremeFundingSignals(context: StrategyContext): P
                 ? "1h settlement threshold breached"
                 : "default threshold breached",
             triggeredAtMs: context.nowMs,
+            alertPrice: ticker.lastPrice,
+            priceChangeSinceLastNotification: null,
+            extremeWindowsInRow: created.extremeWindowsInRow,
+            priceChangeSinceFirstNotificationInStreak: 0,
             markPrice: ticker.markPrice,
             nextFundingTimeMs: ticker.nextFundingTimeMs,
           },
@@ -108,6 +136,43 @@ export async function evaluateExtremeFundingSignals(context: StrategyContext): P
       existing.threshold = threshold;
       existing.fundingIntervalMinutes = fundingIntervalMinutes;
       existing.settlementLabel = settlementLabel;
+      existing.lastPrice = ticker.lastPrice;
+
+      const advancedFundingWindow =
+        existing.lastFundingWindowKey !== null &&
+        fundingWindowKey !== null &&
+        fundingWindowKey !== existing.lastFundingWindowKey;
+      existing.lastFundingWindowKey = fundingWindowKey;
+
+      if (!advancedFundingWindow) {
+        continue;
+      }
+
+      existing.extremeWindowsInRow += 1;
+      const priceChangeSinceLastNotification = pctOrNull(existing.lastAlertPrice, ticker.lastPrice);
+      const priceChangeSinceFirstNotificationInStreak = pctOrNull(existing.extremeStreakStartPrice, ticker.lastPrice);
+
+      out.push({
+        symbol: ticker.symbol,
+        phase: "ALERT",
+        score: ALERT_SCORE,
+        data: {
+          fundingRate: ticker.fundingRate,
+          threshold,
+          fundingIntervalMinutes,
+          settlementLabel,
+          triggerReason: "still extreme in new funding window",
+          triggeredAtMs: existing.triggeredAtMs,
+          alertPrice: ticker.lastPrice,
+          priceChangeSinceLastNotification,
+          extremeWindowsInRow: existing.extremeWindowsInRow,
+          priceChangeSinceFirstNotificationInStreak,
+          markPrice: ticker.markPrice,
+          nextFundingTimeMs: ticker.nextFundingTimeMs,
+        },
+      });
+      existing.lastAlertPrice = ticker.lastPrice;
+      existing.lastAlertAtMs = context.nowMs;
       continue;
     }
 
@@ -145,6 +210,27 @@ export function hydrateExtremeFundingState(snapshot: unknown): void {
         ? tracker.settlementLabel
         : resolveSettlementLabel(fundingIntervalMinutes);
     const triggeredAtMs = typeof tracker.triggeredAtMs === "number" ? tracker.triggeredAtMs : Date.now();
+    const lastPrice = typeof tracker.lastPrice === "number" && Number.isFinite(tracker.lastPrice) ? tracker.lastPrice : null;
+    const lastAlertPrice =
+      typeof tracker.lastAlertPrice === "number" && Number.isFinite(tracker.lastAlertPrice)
+        ? tracker.lastAlertPrice
+        : lastPrice;
+    const lastAlertAtMs =
+      typeof tracker.lastAlertAtMs === "number" && Number.isFinite(tracker.lastAlertAtMs)
+        ? tracker.lastAlertAtMs
+        : triggeredAtMs;
+    const extremeWindowsInRow =
+      typeof tracker.extremeWindowsInRow === "number" && Number.isFinite(tracker.extremeWindowsInRow)
+        ? Math.max(1, Math.floor(tracker.extremeWindowsInRow))
+        : 1;
+    const extremeStreakStartPrice =
+      typeof tracker.extremeStreakStartPrice === "number" && Number.isFinite(tracker.extremeStreakStartPrice)
+        ? tracker.extremeStreakStartPrice
+        : lastAlertPrice;
+    const lastFundingWindowKey =
+      typeof tracker.lastFundingWindowKey === "number" && Number.isFinite(tracker.lastFundingWindowKey)
+        ? tracker.lastFundingWindowKey
+        : null;
 
     trackers[symbol] = {
       symbol,
@@ -153,6 +239,12 @@ export function hydrateExtremeFundingState(snapshot: unknown): void {
       fundingIntervalMinutes,
       settlementLabel,
       triggeredAtMs,
+      lastPrice,
+      lastAlertPrice,
+      lastAlertAtMs,
+      extremeWindowsInRow,
+      extremeStreakStartPrice,
+      lastFundingWindowKey,
     };
   }
 }
@@ -172,7 +264,13 @@ export function listExtremeFundingTrackedSetups(): StrategyTrackedSetup[] {
       fundingIntervalMinutes: tracker.fundingIntervalMinutes,
       settlementLabel: tracker.settlementLabel,
       triggeredAtMs: tracker.triggeredAtMs,
+      lastPrice: tracker.lastPrice,
+      lastAlertPrice: tracker.lastAlertPrice,
+      lastAlertAtMs: tracker.lastAlertAtMs,
+      extremeWindowsInRow: tracker.extremeWindowsInRow,
+      priceChangeSinceLastNotification: pctOrNull(tracker.lastAlertPrice, tracker.lastPrice),
+      priceChangeSinceFirstNotificationInStreak: pctOrNull(tracker.extremeStreakStartPrice, tracker.lastPrice),
     },
-    updatedAtMs: tracker.triggeredAtMs,
+    updatedAtMs: tracker.lastAlertAtMs ?? tracker.triggeredAtMs,
   }));
 }
