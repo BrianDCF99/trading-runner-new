@@ -146,6 +146,7 @@ function totalsBlock(signal: StrategySignal): string[] {
   return [
     "Totals:",
     `Entries: ${totals.entries}`,
+    `Live Entries: ${totals.openPositions}`,
     `Missed Trades: ${totals.missedTrades}`,
     `Winners: ${totals.winners}`,
     `Losers: ${totals.losers}`,

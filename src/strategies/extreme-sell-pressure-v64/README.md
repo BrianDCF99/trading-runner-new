@@ -26,6 +26,7 @@ Runtime parameter overrides (env):
 - `ESP_V64_LEVERAGE` (default `5`)
 - `ESP_V64_STARTING_EQUITY_USD` (default `10000`)
 - `ESP_V64_ENTRY_MARGIN_PCT` (default `1` or `0.01`)
+- `ESP_V64_RESET_TOTALS_ON_HYDRATE` (`true`/`false`, default `false`) to zero entries/win/loss/pnl totals at startup while keeping open positions
 - `ESP_V64_TAKE_PROFIT_PCT` (default `4` or `0.04`)
 - `ESP_V64_REPLACE_LOSING_THRESHOLD_PCT` (default `5` or `0.05`)
 - `ESP_V64_MAX_HOLD_HOURS` (default `48`)
@@ -34,4 +35,4 @@ Runtime parameter overrides (env):
 - `ESP_V64_SELL_RATIO_MAX` (default `0.2`)
 - `ESP_V64_MIN_HOUR_VOLUME` (default `1000000`)
 
-Legacy env names (`ESP_V43_*`) are accepted as fallbacks for migration safety, except leverage now only reads `ESP_V64_LEVERAGE`.
+Legacy env names (`ESP_V43_*`) are accepted as fallbacks for migration safety, except leverage and take-profit now only read `ESP_V64_LEVERAGE` and `ESP_V64_TAKE_PROFIT_PCT`.

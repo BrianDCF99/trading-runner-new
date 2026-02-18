@@ -153,19 +153,29 @@ function listOpenPositions(): OpenPosition[] {
 
 function normalizeOpenPositionsToConfiguredLeverage(nowMs: number): void {
   const configuredLeverage = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.leverage;
+  const configuredTakeProfitPct = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.takeProfitPct;
   for (const position of listOpenPositions()) {
-    if (position.leverage === configuredLeverage) continue;
-    position.leverage = configuredLeverage;
-    position.notionalUsd = position.entryMarginUsd * configuredLeverage;
-    const markMove = computeShortUnleveredReturn(position.entryPrice, position.lastMarkPrice);
-    const markReturnPct = computeShortLeveredReturnPct(position.entryPrice, position.lastMarkPrice, configuredLeverage);
-    if (markMove !== null) {
-      position.lastMarkMovePct = toPercent(markMove);
+    let mutated = false;
+    if (position.leverage !== configuredLeverage) {
+      position.leverage = configuredLeverage;
+      position.notionalUsd = position.entryMarginUsd * configuredLeverage;
+      const markMove = computeShortUnleveredReturn(position.entryPrice, position.lastMarkPrice);
+      const markReturnPct = computeShortLeveredReturnPct(position.entryPrice, position.lastMarkPrice, configuredLeverage);
+      if (markMove !== null) {
+        position.lastMarkMovePct = toPercent(markMove);
+      }
+      if (markReturnPct !== null) {
+        position.lastMarkReturnPct = markReturnPct;
+      }
+      mutated = true;
     }
-    if (markReturnPct !== null) {
-      position.lastMarkReturnPct = markReturnPct;
+    if (position.takeProfitPct !== configuredTakeProfitPct) {
+      position.takeProfitPct = configuredTakeProfitPct;
+      mutated = true;
     }
-    position.updatedAtMs = nowMs;
+    if (mutated) {
+      position.updatedAtMs = nowMs;
+    }
   }
 }
 
@@ -907,7 +917,6 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
       const entryPrice = safeNumber(raw.entryPrice);
       const entryAtMs = safeNumber(raw.entryAtMs);
       const maxHoldAtMs = safeNumber(raw.maxHoldAtMs);
-      const takeProfitPct = safeNumber(raw.takeProfitPct);
       const sellRatioAtEntry = safeNumber(raw.sellRatioAtEntry);
       const eventVolumeAtEntry = safeNumber(raw.eventVolumeAtEntry);
       const sellRatioTimestampMs = safeNumber(raw.sellRatioTimestampMs);
@@ -915,7 +924,6 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
         entryPrice === null ||
         entryAtMs === null ||
         maxHoldAtMs === null ||
-        takeProfitPct === null ||
         sellRatioAtEntry === null ||
         eventVolumeAtEntry === null ||
         sellRatioTimestampMs === null
@@ -949,7 +957,7 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
         leverage: configuredLeverage,
         entryMarginUsd,
         notionalUsd,
-        takeProfitPct,
+        takeProfitPct: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.takeProfitPct,
         maxHoldAtMs: Math.floor(maxHoldAtMs),
         sellRatioAtEntry,
         eventVolumeAtEntry,
@@ -990,6 +998,16 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
     if (realizedPnlUsd !== null) {
       summaryStats.realizedPnlUsd = realizedPnlUsd;
     }
+  }
+
+  if (EXTREME_SELL_PRESSURE_V64_CONFIG.testing.resetTotalsOnHydrate) {
+    summaryStats.entries = 0;
+    summaryStats.missedTrades = 0;
+    summaryStats.winners = 0;
+    summaryStats.losers = 0;
+    summaryStats.liquidated = 0;
+    summaryStats.replaced = 0;
+    summaryStats.realizedPnlUsd = 0;
   }
 
   const snapshotNextPositionId = safeNumber(typed.nextPositionId);

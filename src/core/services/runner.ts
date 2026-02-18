@@ -557,7 +557,11 @@ export class RunnerService implements RunnerPort {
         continue;
       }
       renderedSectionCount += 1;
-      lines.push(`<b>${section.label}</b>`);
+      if (kind === "sellPressure" && section.label === "OPEN_SHORT") {
+        lines.push(`<b>OPEN SHORT</b> - Open Positions: ${setups.length}`);
+      } else {
+        lines.push(`<b>${section.label}</b>`);
+      }
 
       for (const [index, setup] of setups.entries()) {
         if (kind === "new") {
@@ -629,6 +633,7 @@ export class RunnerService implements RunnerPort {
       lines.push("");
       lines.push("📊 <b>Live Totals</b>");
       lines.push(`Entries: <b>${stats.entries}</b>`);
+      lines.push(`Live Entries: <b>${stats.openPositions}</b>`);
       lines.push(`Missed Trades: <b>${stats.missedTrades}</b>`);
       lines.push(`Winners: <b>${stats.winners}</b>`);
       lines.push(`Losers: <b>${stats.losers}</b>`);

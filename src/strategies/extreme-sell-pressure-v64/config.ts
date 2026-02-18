@@ -59,6 +59,8 @@ export interface ExtremeSellPressureV64Config {
   testing: {
     // Testing mode: maintain totals from alert-flow events in-memory.
     eventDrivenTotals: boolean;
+    // Optional one-time reset to zero summary totals on startup/hydrate.
+    resetTotalsOnHydrate: boolean;
   };
 }
 
@@ -77,8 +79,8 @@ export const EXTREME_SELL_PRESSURE_V64_CONFIG: ExtremeSellPressureV64Config = {
     minHourVolume: readPositiveEnv(["ESP_V64_MIN_HOUR_VOLUME", "ESP_V43_MIN_HOUR_VOLUME"], 1_000_000),
     // Override: ESP_V64_LEVERAGE
     leverage: readPositiveEnv("ESP_V64_LEVERAGE", 5),
-    // TP-only at +4% unlevered move in favor of the short. Override: ESP_V64_TAKE_PROFIT_PCT (legacy: ESP_V43_TAKE_PROFIT_PCT)
-    takeProfitPct: readRatioOrPercentEnv(["ESP_V64_TAKE_PROFIT_PCT", "ESP_V43_TAKE_PROFIT_PCT"], 0.04),
+    // TP-only at +4% unlevered move in favor of the short. Override: ESP_V64_TAKE_PROFIT_PCT
+    takeProfitPct: readRatioOrPercentEnv("ESP_V64_TAKE_PROFIT_PCT", 0.04),
     // Override: ESP_V64_MAX_HOLD_HOURS (legacy fallback: ESP_V43_MAX_HOLD_HOURS)
     maxHoldHours: Math.max(1, Math.floor(readPositiveEnv(["ESP_V64_MAX_HOLD_HOURS", "ESP_V43_MAX_HOLD_HOURS"], 48))),
   },
@@ -128,5 +130,6 @@ export const EXTREME_SELL_PRESSURE_V64_CONFIG: ExtremeSellPressureV64Config = {
   },
   testing: {
     eventDrivenTotals: true,
+    resetTotalsOnHydrate: String(process.env.ESP_V64_RESET_TOTALS_ON_HYDRATE ?? "false").toLowerCase() === "true",
   },
 };
