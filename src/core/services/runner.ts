@@ -319,14 +319,17 @@ export class RunnerService implements RunnerPort {
       };
 
       const strategyConfig = await this.options.runtimeStore.getStrategyConfig(this.options.exchange);
-      const runnableStrategies = this.options.strategies.filter((strategy) => {
-        if (!strategyConfig || !strategyConfig.hasConfig) return true;
-        const ids = resolveModuleStrategyIds(strategy);
-        const hasEnabled = ids.some((id) => strategyConfig.enabledIds.has(id));
-        if (hasEnabled) return true;
-        const configured = ids.some((id) => hasConfiguredEntry(strategyConfig, id));
-        return !configured;
-      });
+      const runnableStrategies =
+        trigger === "manual"
+          ? this.options.strategies
+          : this.options.strategies.filter((strategy) => {
+              if (!strategyConfig || !strategyConfig.hasConfig) return true;
+              const ids = resolveModuleStrategyIds(strategy);
+              const hasEnabled = ids.some((id) => strategyConfig.enabledIds.has(id));
+              if (hasEnabled) return true;
+              const configured = ids.some((id) => hasConfiguredEntry(strategyConfig, id));
+              return !configured;
+            });
 
       const allSignals: StrategySignal[] = [];
       for (const strategy of runnableStrategies) {
