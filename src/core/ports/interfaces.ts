@@ -17,6 +17,7 @@ import type {
   RunnerTrigger,
   RuntimeSetupSnapshot,
   SellRatio1hSnapshot,
+  FundingHistoryPoint,
   SetupEventRecord,
   StrategyConfigSnapshot,
   StrategyModule,
@@ -34,6 +35,7 @@ export interface MarketDataPort {
   getInstruments(): Promise<BybitInstrument[]>;
   getKlines1h(symbol: string, limit: number): Promise<Kline1h[]>;
   getSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot>;
+  getFundingHistory(symbol: string, startTimeMs: number, endTimeMs: number, limit?: number): Promise<FundingHistoryPoint[]>;
 }
 
 export interface InlineKeyboardButton {

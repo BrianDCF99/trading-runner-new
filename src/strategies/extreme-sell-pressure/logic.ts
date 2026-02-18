@@ -1,20 +1,27 @@
 /**
- * Extreme sell-pressure v6.4 strategy logic.
+ * Extreme sell-pressure strategy logic.
  *
- * Live adaptation of the v6.4 research rules:
+ * Live adaptation of the v9 research profile:
  * - trigger: sell_ratio <= 0.20 and latest 1h candle volume >= 1,000,000
  * - short entries only
  * - tp-only (4%), leverage 5x, max hold 48h
  * - max 15 open positions
  * - if at capacity, replace worst mark-return position when mark return <= -5%
  */
-import type { BybitTicker, Kline1h, StrategyContext, StrategyTrackedSetup } from "../../core/domain/types.js";
-import { EXTREME_SELL_PRESSURE_V64_CONFIG } from "./config.js";
+import type {
+  BybitTicker,
+  FundingHistoryPoint,
+  Kline1h,
+  StrategyContext,
+  StrategyTrackedSetup,
+} from "../../core/domain/types.js";
+import { EXTREME_SELL_PRESSURE_CONFIG } from "./config.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const ENTRY_SCORE = 100;
 const CLOSE_SCORE = 85;
 const SELL_RATIO_CONCURRENCY = 8;
+const FUNDING_HISTORY_CONCURRENCY = 4;
 
 type ExtremeSellPressurePhase = "OPEN_SHORT" | "CLOSED";
 type ExtremeSellPressureEventType =
@@ -45,6 +52,9 @@ interface OpenPosition {
   sellRatioAtEntry: number;
   eventVolumeAtEntry: number;
   sellRatioTimestampMs: number;
+  netFundingFeeUsd: number;
+  fundingSettlementsApplied: number;
+  lastFundingAppliedAtMs: number | null;
   lastMarkPrice: number;
   lastMarkMovePct: number;
   lastMarkReturnPct: number;
@@ -76,6 +86,7 @@ interface SummaryStats {
   liquidated: number;
   replaced: number;
   realizedPnlUsd: number;
+  netFundingFeeUsd: number;
 }
 
 interface PortfolioState {
@@ -108,6 +119,7 @@ interface TotalsSnapshot {
   openNotionalUsd: number;
   unrealizedPnlUsd: number;
   realizedPnlUsd: number;
+  netFundingFeeUsd: number;
   currentEquityUsd: number;
   totalPnlUsd: number;
   pnlPct: number;
@@ -116,13 +128,14 @@ interface TotalsSnapshot {
 }
 
 interface CloseResult {
-  signal: ExtremeSellPressureV64InternalSignal;
+  signal: ExtremeSellPressureInternalSignal;
   eventType: CloseEventType;
   leveragedReturnPct: number;
   realizedPnlUsd: number;
+  netFundingFeeUsd: number;
 }
 
-export interface ExtremeSellPressureV64InternalSignal {
+export interface ExtremeSellPressureInternalSignal {
   symbol: string;
   phase: ExtremeSellPressurePhase;
   score: number;
@@ -139,10 +152,11 @@ const summaryStats: SummaryStats = {
   liquidated: 0,
   replaced: 0,
   realizedPnlUsd: 0,
+  netFundingFeeUsd: 0,
 };
 const portfolioState: PortfolioState = {
-  startingEquityUsd: EXTREME_SELL_PRESSURE_V64_CONFIG.capital.startingEquityUsd,
-  cashUsd: EXTREME_SELL_PRESSURE_V64_CONFIG.capital.startingEquityUsd,
+  startingEquityUsd: EXTREME_SELL_PRESSURE_CONFIG.capital.startingEquityUsd,
+  cashUsd: EXTREME_SELL_PRESSURE_CONFIG.capital.startingEquityUsd,
 };
 let nextPositionId = 1;
 let symbolScanCursor = 0;
@@ -152,8 +166,8 @@ function listOpenPositions(): OpenPosition[] {
 }
 
 function normalizeOpenPositionsToConfiguredLeverage(nowMs: number): void {
-  const configuredLeverage = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.leverage;
-  const configuredTakeProfitPct = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.takeProfitPct;
+  const configuredLeverage = EXTREME_SELL_PRESSURE_CONFIG.entry.leverage;
+  const configuredTakeProfitPct = EXTREME_SELL_PRESSURE_CONFIG.entry.takeProfitPct;
   for (const position of listOpenPositions()) {
     let mutated = false;
     if (position.leverage !== configuredLeverage) {
@@ -301,6 +315,101 @@ function computeOpenPositionUnrealizedPnlUsd(position: OpenPosition): number {
   return realizedPnlFromLeveredReturn(position.entryMarginUsd, leveragedReturnPct);
 }
 
+function computePositionFundingReturnPct(position: OpenPosition): number {
+  if (!Number.isFinite(position.entryMarginUsd) || position.entryMarginUsd <= 0) return 0;
+  const netFundingFeeUsd = safeNumber(position.netFundingFeeUsd) ?? 0;
+  return (netFundingFeeUsd / position.entryMarginUsd) * 100;
+}
+
+function computeOpenPositionReturnPctWithFunding(position: OpenPosition): number {
+  const markReturnPct = safeNumber(position.lastMarkReturnPct) ?? 0;
+  return markReturnPct + computePositionFundingReturnPct(position);
+}
+
+function fundingFeeUsdForShortPosition(notionalUsd: number, fundingRate: number): number {
+  if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return 0;
+  if (!Number.isFinite(fundingRate)) return 0;
+  // For shorts: positive funding means shorts receive; negative funding means shorts pay.
+  return notionalUsd * fundingRate;
+}
+
+async function applyFundingForOpenPositions(context: StrategyContext): Promise<void> {
+  const positions = listOpenPositions();
+  if (positions.length === 0) return;
+
+  const updates = await mapWithConcurrency(positions, FUNDING_HISTORY_CONCURRENCY, async (position) => {
+    const anchorMs = position.lastFundingAppliedAtMs ?? position.entryAtMs;
+    const startMs = anchorMs + 1;
+    if (startMs > context.nowMs) {
+      return {
+        positionKey: position.positionKey,
+        netFundingFeeUsdDelta: 0,
+        settlementsApplied: 0,
+        lastFundingAppliedAtMs: position.lastFundingAppliedAtMs,
+      };
+    }
+
+    let history: FundingHistoryPoint[] = [];
+    try {
+      history = await context.getFundingHistory(position.symbol, startMs, context.nowMs, 200);
+    } catch {
+      history = [];
+    }
+    if (history.length === 0) {
+      return {
+        positionKey: position.positionKey,
+        netFundingFeeUsdDelta: 0,
+        settlementsApplied: 0,
+        lastFundingAppliedAtMs: position.lastFundingAppliedAtMs,
+      };
+    }
+
+    let netFundingFeeUsdDelta = 0;
+    let settlementsApplied = 0;
+    let lastFundingAppliedAtMs = position.lastFundingAppliedAtMs;
+    const lowerBoundMs = position.lastFundingAppliedAtMs ?? position.entryAtMs;
+    for (const point of history) {
+      if (!Number.isFinite(point.timestampMs) || !Number.isFinite(point.fundingRate)) continue;
+      if (point.timestampMs <= lowerBoundMs) continue;
+      netFundingFeeUsdDelta += fundingFeeUsdForShortPosition(position.notionalUsd, point.fundingRate);
+      settlementsApplied += 1;
+      lastFundingAppliedAtMs = point.timestampMs;
+    }
+
+    return {
+      positionKey: position.positionKey,
+      netFundingFeeUsdDelta,
+      settlementsApplied,
+      lastFundingAppliedAtMs,
+    };
+  });
+
+  for (const update of updates) {
+    if (update.settlementsApplied <= 0 || update.netFundingFeeUsdDelta === 0) {
+      // Preserve checkpoint even when aggregate delta is exactly zero.
+      if (update.settlementsApplied > 0) {
+        const position = openPositions[update.positionKey];
+        if (!position) continue;
+        position.fundingSettlementsApplied += update.settlementsApplied;
+        position.lastFundingAppliedAtMs = update.lastFundingAppliedAtMs;
+        position.updatedAtMs = context.nowMs;
+      }
+      continue;
+    }
+
+    const position = openPositions[update.positionKey];
+    if (!position) continue;
+
+    position.netFundingFeeUsd += update.netFundingFeeUsdDelta;
+    position.fundingSettlementsApplied += update.settlementsApplied;
+    position.lastFundingAppliedAtMs = update.lastFundingAppliedAtMs;
+    position.updatedAtMs = context.nowMs;
+
+    summaryStats.netFundingFeeUsd += update.netFundingFeeUsdDelta;
+    portfolioState.cashUsd += update.netFundingFeeUsdDelta;
+  }
+}
+
 function buildPortfolioSnapshot(): PortfolioSnapshot {
   let marginInUseUsd = 0;
   let openNotionalUsd = 0;
@@ -316,6 +425,7 @@ function buildPortfolioSnapshot(): PortfolioSnapshot {
   const totalPnlUsd = currentEquityUsd - portfolioState.startingEquityUsd;
   const pnlPct =
     portfolioState.startingEquityUsd > 0 ? (totalPnlUsd / portfolioState.startingEquityUsd) * 100 : 0;
+  const realizedPnlUsd = summaryStats.realizedPnlUsd + summaryStats.netFundingFeeUsd;
 
   return {
     currentEquityUsd,
@@ -324,7 +434,7 @@ function buildPortfolioSnapshot(): PortfolioSnapshot {
     openNotionalUsd,
     openPositionValueUsd,
     unrealizedPnlUsd,
-    realizedPnlUsd: summaryStats.realizedPnlUsd,
+    realizedPnlUsd,
     totalPnlUsd,
     pnlPct,
   };
@@ -332,7 +442,7 @@ function buildPortfolioSnapshot(): PortfolioSnapshot {
 
 function computeEntryMarginUsdForNextTrade(): number | null {
   const portfolio = buildPortfolioSnapshot();
-  const targetMarginUsd = portfolio.currentEquityUsd * EXTREME_SELL_PRESSURE_V64_CONFIG.capital.entryMarginPct;
+  const targetMarginUsd = portfolio.currentEquityUsd * EXTREME_SELL_PRESSURE_CONFIG.capital.entryMarginPct;
   if (!Number.isFinite(targetMarginUsd) || targetMarginUsd <= 0) return null;
   if (!Number.isFinite(portfolioState.cashUsd) || portfolioState.cashUsd <= 0) return null;
   const entryMarginUsd = Math.min(targetMarginUsd, portfolioState.cashUsd);
@@ -357,6 +467,7 @@ function buildTotalsSnapshot(): TotalsSnapshot {
     openNotionalUsd: portfolio.openNotionalUsd,
     unrealizedPnlUsd: portfolio.unrealizedPnlUsd,
     realizedPnlUsd: portfolio.realizedPnlUsd,
+    netFundingFeeUsd: summaryStats.netFundingFeeUsd,
     currentEquityUsd: portfolio.currentEquityUsd,
     totalPnlUsd: portfolio.totalPnlUsd,
     pnlPct: portfolio.pnlPct,
@@ -365,7 +476,7 @@ function buildTotalsSnapshot(): TotalsSnapshot {
   };
 }
 
-function withTotals(signal: ExtremeSellPressureV64InternalSignal): ExtremeSellPressureV64InternalSignal {
+function withTotals(signal: ExtremeSellPressureInternalSignal): ExtremeSellPressureInternalSignal {
   return {
     ...signal,
     data: {
@@ -376,7 +487,7 @@ function withTotals(signal: ExtremeSellPressureV64InternalSignal): ExtremeSellPr
 }
 
 function applyEntryToSummary(eventType: EntryEventType): void {
-  if (!EXTREME_SELL_PRESSURE_V64_CONFIG.testing.eventDrivenTotals) return;
+  if (!EXTREME_SELL_PRESSURE_CONFIG.testing.eventDrivenTotals) return;
   summaryStats.entries += 1;
   if (eventType === "ENTRY_REPLACE_OPEN_SHORT") {
     summaryStats.replaced += 1;
@@ -384,7 +495,7 @@ function applyEntryToSummary(eventType: EntryEventType): void {
 }
 
 function applyCloseToSummary(close: CloseResult): void {
-  if (!EXTREME_SELL_PRESSURE_V64_CONFIG.testing.eventDrivenTotals) return;
+  if (!EXTREME_SELL_PRESSURE_CONFIG.testing.eventDrivenTotals) return;
   summaryStats.realizedPnlUsd += close.realizedPnlUsd;
   if (close.eventType === "EXIT_LIQUIDATED") {
     summaryStats.liquidated += 1;
@@ -398,7 +509,7 @@ function applyCloseToSummary(close: CloseResult): void {
 }
 
 function recordMissedTrade(): void {
-  if (!EXTREME_SELL_PRESSURE_V64_CONFIG.testing.eventDrivenTotals) return;
+  if (!EXTREME_SELL_PRESSURE_CONFIG.testing.eventDrivenTotals) return;
   summaryStats.missedTrades += 1;
 }
 
@@ -428,6 +539,8 @@ function closePosition(input: {
   }
 
   const realizedPnlUsd = realizedPnlFromLeveredReturn(position.entryMarginUsd, leveragedReturnPct);
+  const netFundingFeeUsd = safeNumber(position.netFundingFeeUsd) ?? 0;
+  const realizedPnlAfterFundingUsd = realizedPnlUsd + netFundingFeeUsd;
   portfolioState.cashUsd += position.entryMarginUsd + realizedPnlUsd;
   if (portfolioState.cashUsd < 0) {
     portfolioState.cashUsd = 0;
@@ -439,6 +552,7 @@ function closePosition(input: {
     eventType,
     leveragedReturnPct,
     realizedPnlUsd,
+    netFundingFeeUsd,
     signal: {
       symbol: position.symbol,
       phase: "CLOSED",
@@ -458,6 +572,9 @@ function closePosition(input: {
         entryMarginUsd: position.entryMarginUsd,
         notionalUsd: position.notionalUsd,
         realizedPnlUsd,
+        netFundingFeeUsd,
+        realizedPnlAfterFundingUsd,
+        fundingSettlementsApplied: position.fundingSettlementsApplied,
         takeProfitPrice: position.entryPrice * (1 - position.takeProfitPct),
         unleveredReturnPct,
         leveragedReturnPct,
@@ -473,12 +590,12 @@ function openPosition(input: {
   eventType: EntryEventType;
   entryMarginUsd: number;
   extraData?: Record<string, unknown>;
-}): ExtremeSellPressureV64InternalSignal {
+}): ExtremeSellPressureInternalSignal {
   const { candidate, nowMs, eventType, entryMarginUsd, extraData } = input;
   const positionId = nextPositionId;
   const positionKey = `p${positionId}`;
-  const leverage = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.leverage;
-  const takeProfitPct = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.takeProfitPct;
+  const leverage = EXTREME_SELL_PRESSURE_CONFIG.entry.leverage;
+  const takeProfitPct = EXTREME_SELL_PRESSURE_CONFIG.entry.takeProfitPct;
   const takeProfitPrice = candidate.entryPrice * (1 - takeProfitPct);
   const notionalUsd = entryMarginUsd * leverage;
 
@@ -492,10 +609,13 @@ function openPosition(input: {
     entryMarginUsd,
     notionalUsd,
     takeProfitPct,
-    maxHoldAtMs: nowMs + EXTREME_SELL_PRESSURE_V64_CONFIG.entry.maxHoldHours * HOUR_MS,
+    maxHoldAtMs: nowMs + EXTREME_SELL_PRESSURE_CONFIG.entry.maxHoldHours * HOUR_MS,
     sellRatioAtEntry: candidate.sellRatio,
     eventVolumeAtEntry: candidate.hourVolume,
     sellRatioTimestampMs: candidate.sellRatioTimestampMs,
+    netFundingFeeUsd: 0,
+    fundingSettlementsApplied: 0,
+    lastFundingAppliedAtMs: null,
     lastMarkPrice: candidate.entryPrice,
     lastMarkMovePct: 0,
     lastMarkReturnPct: 0,
@@ -521,12 +641,15 @@ function openPosition(input: {
       takeProfitPrice,
       leverage: position.leverage,
       takeProfitPct: toPercent(position.takeProfitPct),
-      maxHoldHours: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.maxHoldHours,
+      maxHoldHours: EXTREME_SELL_PRESSURE_CONFIG.entry.maxHoldHours,
       sellRatio: position.sellRatioAtEntry,
       hourVolume: position.eventVolumeAtEntry,
       sellRatioTimestampMs: position.sellRatioTimestampMs,
-      sellRatioThreshold: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.sellRatioMax,
-      volumeThreshold: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.minHourVolume,
+      markReturnPctWithFunding: computeOpenPositionReturnPctWithFunding(position),
+      netFundingFeeUsd: position.netFundingFeeUsd,
+      fundingSettlementsApplied: position.fundingSettlementsApplied,
+      sellRatioThreshold: EXTREME_SELL_PRESSURE_CONFIG.entry.sellRatioMax,
+      volumeThreshold: EXTREME_SELL_PRESSURE_CONFIG.entry.minHourVolume,
       openPositions: listOpenPositions().length,
       ...extraData,
     },
@@ -534,7 +657,7 @@ function openPosition(input: {
 }
 
 function cleanupSymbolState(nowMs: number, activeSymbols: Set<string>): void {
-  const retentionMs = EXTREME_SELL_PRESSURE_V64_CONFIG.retention.closedSignalRetentionHours * HOUR_MS;
+  const retentionMs = EXTREME_SELL_PRESSURE_CONFIG.retention.closedSignalRetentionHours * HOUR_MS;
   const openSymbols = new Set(listOpenPositions().map((position) => position.symbol));
   for (const [symbol, state] of Object.entries(symbolStates)) {
     const isOpen = openSymbols.has(symbol);
@@ -556,7 +679,7 @@ function selectReplacementCandidate(input: {
   tickerBySymbol: Map<string, BybitTicker>;
 }): { positionKey: string; symbol: string; markPrice: number; markReturnPct: number } | null {
   const { nowMs, tickerBySymbol } = input;
-  const thresholdPct = -toPercent(EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.replaceLosingThresholdPct);
+  const thresholdPct = -toPercent(EXTREME_SELL_PRESSURE_CONFIG.portfolio.replaceLosingThresholdPct);
   let chosen: { positionKey: string; symbol: string; markPrice: number; markReturnPct: number } | null = null;
 
   for (const position of listOpenPositions()) {
@@ -658,12 +781,12 @@ async function evaluateEntryCandidate(input: {
     ) {
       return null;
     }
-    if (sellRatio > EXTREME_SELL_PRESSURE_V64_CONFIG.entry.sellRatioMax) return null;
+    if (sellRatio > EXTREME_SELL_PRESSURE_CONFIG.entry.sellRatioMax) return null;
 
-    const candles = await context.getKlines1h(symbol, EXTREME_SELL_PRESSURE_V64_CONFIG.market.klineLookbackHours);
+    const candles = await context.getKlines1h(symbol, EXTREME_SELL_PRESSURE_CONFIG.market.klineLookbackHours);
     const hourVolume = readLatestHourVolume(candles);
     state.lastObservedHourVolume = hourVolume;
-    if (hourVolume === null || hourVolume < EXTREME_SELL_PRESSURE_V64_CONFIG.entry.minHourVolume) {
+    if (hourVolume === null || hourVolume < EXTREME_SELL_PRESSURE_CONFIG.entry.minHourVolume) {
       return null;
     }
 
@@ -703,12 +826,13 @@ function sortedEligibleSymbols(context: StrategyContext): string[] {
   return tickers.map((ticker) => ticker.symbol);
 }
 
-export async function evaluateExtremeSellPressureV64Signals(
+export async function evaluateExtremeSellPressureSignals(
   context: StrategyContext
-): Promise<ExtremeSellPressureV64InternalSignal[]> {
-  const out: ExtremeSellPressureV64InternalSignal[] = [];
+): Promise<ExtremeSellPressureInternalSignal[]> {
+  const out: ExtremeSellPressureInternalSignal[] = [];
   const tickerBySymbol = new Map(context.tickers.map((ticker) => [ticker.symbol, ticker]));
   normalizeOpenPositionsToConfiguredLeverage(context.nowMs);
+  await applyFundingForOpenPositions(context);
 
   const naturalExits = processNaturalExits(context, tickerBySymbol);
   for (const close of naturalExits) {
@@ -719,7 +843,7 @@ export async function evaluateExtremeSellPressureV64Signals(
   const eligibleSymbols = sortedEligibleSymbols(context);
   const scanSymbols = selectScanBatch(
     eligibleSymbols,
-    EXTREME_SELL_PRESSURE_V64_CONFIG.market.sellRatioScanBatchSize
+    EXTREME_SELL_PRESSURE_CONFIG.market.sellRatioScanBatchSize
   );
 
   const candidatesRaw = await mapWithConcurrency(scanSymbols, SELL_RATIO_CONCURRENCY, (symbol) =>
@@ -734,7 +858,7 @@ export async function evaluateExtremeSellPressureV64Signals(
   for (const candidate of candidates) {
     markProcessedSellRatio(candidate.symbol, candidate.sellRatioTimestampMs, context.nowMs);
 
-    if (EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.preventDuplicateSymbolEntries) {
+    if (EXTREME_SELL_PRESSURE_CONFIG.portfolio.preventDuplicateSymbolEntries) {
       const symbolAlreadyOpen = listOpenPositions().some((position) => position.symbol === candidate.symbol);
       if (symbolAlreadyOpen) {
         recordMissedTrade();
@@ -743,7 +867,7 @@ export async function evaluateExtremeSellPressureV64Signals(
     }
 
     const openCount = listOpenPositions().length;
-    if (openCount < EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.maxOpenPositions) {
+    if (openCount < EXTREME_SELL_PRESSURE_CONFIG.portfolio.maxOpenPositions) {
       const entryMarginUsd = computeEntryMarginUsdForNextTrade();
       if (entryMarginUsd === null) {
         recordMissedTrade();
@@ -778,7 +902,7 @@ export async function evaluateExtremeSellPressureV64Signals(
       eventType: "EXIT_REPLACE_STOP",
       markPrice: replacement.markPrice,
       forcedLeveredReturnPct: -toPercent(
-        EXTREME_SELL_PRESSURE_V64_CONFIG.portfolio.replaceLosingThresholdPct
+        EXTREME_SELL_PRESSURE_CONFIG.portfolio.replaceLosingThresholdPct
       ),
       extraData: {
         markReturnAtReplacementPct: replacement.markReturnPct,
@@ -821,11 +945,11 @@ export async function evaluateExtremeSellPressureV64Signals(
   return out;
 }
 
-export function listExtremeSellPressureV64TrackedSetups(): StrategyTrackedSetup[] {
+export function listExtremeSellPressureTrackedSetups(): StrategyTrackedSetup[] {
   return listOpenPositions().map((position) => ({
-    key: `${EXTREME_SELL_PRESSURE_V64_CONFIG.strategyId}:${position.positionId}`,
-    strategyId: EXTREME_SELL_PRESSURE_V64_CONFIG.strategyId,
-    strategyName: EXTREME_SELL_PRESSURE_V64_CONFIG.strategyName,
+    key: `${EXTREME_SELL_PRESSURE_CONFIG.strategyId}:${position.positionId}`,
+    strategyId: EXTREME_SELL_PRESSURE_CONFIG.strategyId,
+    strategyName: EXTREME_SELL_PRESSURE_CONFIG.strategyName,
     symbol: position.symbol,
     phase: "OPEN_SHORT",
     isReady: false,
@@ -848,12 +972,16 @@ export function listExtremeSellPressureV64TrackedSetups(): StrategyTrackedSetup[
       markPrice: position.lastMarkPrice,
       markMovePct: position.lastMarkMovePct,
       markReturnPct: position.lastMarkReturnPct,
+      markReturnPctWithFunding: computeOpenPositionReturnPctWithFunding(position),
+      netFundingFeeUsd: position.netFundingFeeUsd,
+      fundingSettlementsApplied: position.fundingSettlementsApplied,
+      lastFundingAppliedAtMs: position.lastFundingAppliedAtMs,
     },
     updatedAtMs: position.updatedAtMs,
   }));
 }
 
-export function exportExtremeSellPressureV64State(): Record<string, unknown> {
+export function exportExtremeSellPressureState(): Record<string, unknown> {
   return {
     openPositions,
     symbolStates,
@@ -865,7 +993,7 @@ export function exportExtremeSellPressureV64State(): Record<string, unknown> {
   };
 }
 
-export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
+export function hydrateExtremeSellPressureState(snapshot: unknown): void {
   if (!snapshot || typeof snapshot !== "object") return;
   const typed = snapshot as {
     openPositions?: Record<string, Partial<OpenPosition>>;
@@ -890,8 +1018,9 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
   summaryStats.liquidated = 0;
   summaryStats.replaced = 0;
   summaryStats.realizedPnlUsd = 0;
-  portfolioState.startingEquityUsd = EXTREME_SELL_PRESSURE_V64_CONFIG.capital.startingEquityUsd;
-  portfolioState.cashUsd = EXTREME_SELL_PRESSURE_V64_CONFIG.capital.startingEquityUsd;
+  summaryStats.netFundingFeeUsd = 0;
+  portfolioState.startingEquityUsd = EXTREME_SELL_PRESSURE_CONFIG.capital.startingEquityUsd;
+  portfolioState.cashUsd = EXTREME_SELL_PRESSURE_CONFIG.capital.startingEquityUsd;
 
   const hasHydratedPortfolioState =
     typed.portfolioState !== undefined && typed.portfolioState !== null && typeof typed.portfolioState === "object";
@@ -907,9 +1036,9 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
   }
 
   if (typed.openPositions && typeof typed.openPositions === "object") {
-    const configuredLeverage = EXTREME_SELL_PRESSURE_V64_CONFIG.entry.leverage;
+    const configuredLeverage = EXTREME_SELL_PRESSURE_CONFIG.entry.leverage;
     const legacyEntryMarginDefaultUsd =
-      portfolioState.startingEquityUsd * EXTREME_SELL_PRESSURE_V64_CONFIG.capital.entryMarginPct;
+      portfolioState.startingEquityUsd * EXTREME_SELL_PRESSURE_CONFIG.capital.entryMarginPct;
     for (const [storedKey, raw] of Object.entries(typed.openPositions)) {
       if (!raw || typeof raw !== "object") continue;
       const rawSymbol = typeof raw.symbol === "string" && raw.symbol.trim().length > 0 ? raw.symbol.trim() : null;
@@ -957,11 +1086,14 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
         leverage: configuredLeverage,
         entryMarginUsd,
         notionalUsd,
-        takeProfitPct: EXTREME_SELL_PRESSURE_V64_CONFIG.entry.takeProfitPct,
+        takeProfitPct: EXTREME_SELL_PRESSURE_CONFIG.entry.takeProfitPct,
         maxHoldAtMs: Math.floor(maxHoldAtMs),
         sellRatioAtEntry,
         eventVolumeAtEntry,
         sellRatioTimestampMs: Math.floor(sellRatioTimestampMs),
+        netFundingFeeUsd: safeNumber(raw.netFundingFeeUsd) ?? 0,
+        fundingSettlementsApplied: Math.max(0, Math.floor(safeNumber(raw.fundingSettlementsApplied) ?? 0)),
+        lastFundingAppliedAtMs: safeNumber(raw.lastFundingAppliedAtMs),
         lastMarkPrice,
         lastMarkMovePct: hydratedMarkMove === null ? 0 : toPercent(hydratedMarkMove),
         lastMarkReturnPct: hydratedMarkReturnPct ?? 0,
@@ -998,9 +1130,13 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
     if (realizedPnlUsd !== null) {
       summaryStats.realizedPnlUsd = realizedPnlUsd;
     }
+    const netFundingFeeUsd = safeNumber(typed.summaryStats.netFundingFeeUsd);
+    if (netFundingFeeUsd !== null) {
+      summaryStats.netFundingFeeUsd = netFundingFeeUsd;
+    }
   }
 
-  if (EXTREME_SELL_PRESSURE_V64_CONFIG.testing.resetTotalsOnHydrate) {
+  if (EXTREME_SELL_PRESSURE_CONFIG.testing.resetTotalsOnHydrate) {
     summaryStats.entries = 0;
     summaryStats.missedTrades = 0;
     summaryStats.winners = 0;
@@ -1008,6 +1144,7 @@ export function hydrateExtremeSellPressureV64State(snapshot: unknown): void {
     summaryStats.liquidated = 0;
     summaryStats.replaced = 0;
     summaryStats.realizedPnlUsd = 0;
+    summaryStats.netFundingFeeUsd = 0;
   }
 
   const snapshotNextPositionId = safeNumber(typed.nextPositionId);

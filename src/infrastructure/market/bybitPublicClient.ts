@@ -1,7 +1,13 @@
 /**
  * Public Bybit REST adapter used by strategies.
  */
-import type { BybitInstrument, BybitTicker, Kline1h, SellRatio1hSnapshot } from "../../core/domain/types.js";
+import type {
+  BybitInstrument,
+  BybitTicker,
+  FundingHistoryPoint,
+  Kline1h,
+  SellRatio1hSnapshot,
+} from "../../core/domain/types.js";
 import type { MarketDataPort } from "../../core/ports/interfaces.js";
 
 interface HttpOptions {
@@ -162,6 +168,47 @@ export class BybitPublicClient implements MarketDataPort {
       snapshot,
     });
     return snapshot;
+  }
+
+  async getFundingHistory(
+    symbol: string,
+    startTimeMs: number,
+    endTimeMs: number,
+    limit = 200
+  ): Promise<FundingHistoryPoint[]> {
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    if (!normalizedSymbol) return [];
+    const start = Math.max(0, Math.floor(startTimeMs));
+    const end = Math.max(start, Math.floor(endTimeMs));
+    if (end <= 0 || end < start) return [];
+
+    const clampedLimit = Math.max(1, Math.min(Math.floor(limit), 200));
+    const url =
+      `${this.apiBase}/v5/market/funding/history?category=linear` +
+      `&symbol=${encodeURIComponent(normalizedSymbol)}` +
+      `&startTime=${start}` +
+      `&endTime=${end}` +
+      `&limit=${clampedLimit}`;
+    const raw = (await fetchJson(url, { timeoutMs: this.timeoutMs })) as {
+      result?: { list?: Array<Record<string, unknown>> };
+    };
+
+    const rows = raw.result?.list ?? [];
+    const points = rows
+      .map((row) => {
+        const timestampMs = parseEpochMs(row.fundingRateTimestamp);
+        const fundingRate = parseNullableNumber(row.fundingRate);
+        if (timestampMs === null || fundingRate === null) return null;
+        return {
+          symbol: normalizedSymbol,
+          timestampMs,
+          fundingRate,
+        };
+      })
+      .filter((item): item is FundingHistoryPoint => item !== null)
+      .sort((a, b) => a.timestampMs - b.timestampMs);
+
+    return points;
   }
 
   private async fetchSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot> {

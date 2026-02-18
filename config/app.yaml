@@ -17,9 +17,9 @@ strategies:
     enabled: true
     directory: extreme-funding-alerts
 
-  - id: bybit:extreme-sell-pressure-suite:v64
+  - id: bybit:extreme-sell-pressure-suite:v9
     enabled: true
-    directory: extreme-sell-pressure-v64
+    directory: extreme-sell-pressure
 
   - id: bybit:long25-suite:v1
     enabled: false

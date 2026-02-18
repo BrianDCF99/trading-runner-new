@@ -42,12 +42,19 @@ export interface SellRatio1hSnapshot {
   timestampMs: number | null;
 }
 
+export interface FundingHistoryPoint {
+  symbol: string;
+  timestampMs: number;
+  fundingRate: number;
+}
+
 export interface StrategyContext {
   nowMs: number;
   tickers: BybitTicker[];
   instruments: BybitInstrument[];
   getKlines1h(symbol: string, limit: number): Promise<Kline1h[]>;
   getSellRatio1h(symbol: string): Promise<SellRatio1hSnapshot>;
+  getFundingHistory(symbol: string, startTimeMs: number, endTimeMs: number, limit?: number): Promise<FundingHistoryPoint[]>;
 }
 
 export interface StrategySignal {

@@ -316,6 +316,8 @@ export class RunnerService implements RunnerPort {
         instruments,
         getKlines1h: (symbol: string, limit: number) => this.options.marketData.getKlines1h(symbol, limit),
         getSellRatio1h: (symbol: string) => this.options.marketData.getSellRatio1h(symbol),
+        getFundingHistory: (symbol: string, startTimeMs: number, endTimeMs: number, limit?: number) =>
+          this.options.marketData.getFundingHistory(symbol, startTimeMs, endTimeMs, limit),
       };
 
       const strategyConfig = await this.options.runtimeStore.getStrategyConfig(this.options.exchange);
@@ -510,8 +512,10 @@ export class RunnerService implements RunnerPort {
               }
             : kind === "sellPressure"
               ? {
-                  title: "Bybit Extreme Sell Pressure v6.4",
+                  title: "Bybit Extreme Sell Pressure v9",
                   strategyIds: [
+                    "bybit:extreme-sell-pressure-suite:v9",
+                    "bybit:extreme-sell-pressure:v9",
                     "bybit:extreme-sell-pressure-suite:v64",
                     "bybit:extreme-sell-pressure:v64",
                     "bybit:extreme-sell-pressure-suite:v43",
@@ -583,10 +587,11 @@ export class RunnerService implements RunnerPort {
         if (kind === "sellPressure") {
           const entryPrice = readNumericPayload(setup.payload, "entryPrice");
           const entryAtMs = readNumericPayload(setup.payload, "entryAtMs");
+          const markReturnPctWithFunding = readNumericPayload(setup.payload, "markReturnPctWithFunding");
           const markReturnPct = readNumericPayload(setup.payload, "markReturnPct");
           // Fallback for older snapshots that only had unlevered move persisted.
           const legacyMarkMovePct = readNumericPayload(setup.payload, "markMovePct");
-          const effectivePnlPct = markReturnPct ?? legacyMarkMovePct;
+          const effectivePnlPct = markReturnPctWithFunding ?? markReturnPct ?? legacyMarkMovePct;
           const held = formatElapsed(entryAtMs, nowMs);
           const entryPriceText = entryPrice === null ? "n/a" : `$${entryPrice.toLocaleString("en-US", { maximumFractionDigits: 8 })}`;
           const pnlText =
@@ -850,10 +855,12 @@ export class RunnerService implements RunnerPort {
   } {
     const module = this.options.strategies.find(
       (strategy) =>
+        strategy.id === "bybit:extreme-sell-pressure-suite:v9" ||
         strategy.id === "bybit:extreme-sell-pressure-suite:v64" ||
         strategy.id === "bybit:extreme-sell-pressure-suite:v43" ||
         (strategy.strategyIds
-          ? strategy.strategyIds.includes("bybit:extreme-sell-pressure:v64") ||
+          ? strategy.strategyIds.includes("bybit:extreme-sell-pressure:v9") ||
+            strategy.strategyIds.includes("bybit:extreme-sell-pressure:v64") ||
             strategy.strategyIds.includes("bybit:extreme-sell-pressure:v43")
           : false)
     );

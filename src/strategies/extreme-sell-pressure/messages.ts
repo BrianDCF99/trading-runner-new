@@ -1,8 +1,9 @@
 /**
- * Extreme sell-pressure v6.4 message formatter.
+ * Extreme sell-pressure message formatter.
  */
 import type { StrategySignal } from "../../core/domain/types.js";
 import { formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
+import { EXTREME_SELL_PRESSURE_CONFIG } from "./config.js";
 
 type ExtremeSellPressureEventType =
   | "ENTRY_OPEN_SHORT"
@@ -26,13 +27,14 @@ interface TotalsPayload {
   openNotionalUsd: number;
   unrealizedPnlUsd: number;
   realizedPnlUsd: number;
+  netFundingFeeUsd: number;
   currentEquityUsd: number;
   totalPnlUsd: number;
   pnlPct: number;
   winPct: number;
 }
 
-const STRATEGY_TITLE = "Extreme Sell Pressure";
+const STRATEGY_TITLE = `Extreme Sell Pressure ${EXTREME_SELL_PRESSURE_CONFIG.version}`;
 
 function readEventType(signal: StrategySignal): ExtremeSellPressureEventType | null {
   const raw = signal.data.eventType;
@@ -85,6 +87,14 @@ function fmtUsd(value: unknown): string {
   return `$${parsed.toLocaleString("en-US", { maximumFractionDigits: 8 })}`;
 }
 
+function fmtSignedUsdWithDirection(value: unknown): string {
+  const parsed = asFiniteNumber(value) ?? 0;
+  const absText = `$${Math.abs(parsed).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (parsed > 0) return `+${absText} (money in)`;
+  if (parsed < 0) return `-${absText} (money out)`;
+  return `+$0.00 (flat)`;
+}
+
 function readTotals(signal: StrategySignal): TotalsPayload {
   const raw = signal.data.totals;
   if (!raw || typeof raw !== "object") {
@@ -102,6 +112,7 @@ function readTotals(signal: StrategySignal): TotalsPayload {
       openNotionalUsd: 0,
       unrealizedPnlUsd: 0,
       realizedPnlUsd: 0,
+      netFundingFeeUsd: 0,
       currentEquityUsd: 0,
       totalPnlUsd: 0,
       pnlPct: 0,
@@ -124,6 +135,7 @@ function readTotals(signal: StrategySignal): TotalsPayload {
     openNotionalUsd: asFiniteNumber(obj.openNotionalUsd) ?? 0,
     unrealizedPnlUsd: asFiniteNumber(obj.unrealizedPnlUsd) ?? 0,
     realizedPnlUsd: asFiniteNumber(obj.realizedPnlUsd) ?? 0,
+    netFundingFeeUsd: asFiniteNumber(obj.netFundingFeeUsd) ?? 0,
     currentEquityUsd: asFiniteNumber(obj.currentEquityUsd) ?? 0,
     totalPnlUsd: asFiniteNumber(obj.totalPnlUsd) ?? 0,
     pnlPct: asFiniteNumber(obj.pnlPct) ?? 0,
@@ -220,12 +232,13 @@ function formatExitMessage(signal: StrategySignal): string {
     formatSymbolLink("bybit", signal.symbol),
     `PnL: ${fmtSignedPercent(signal.data.leveragedReturnPct)}`,
     `Leverage: ${fmtNumber(signal.data.leverage, 2)}x | Unlev: ${fmtSignedPercent(signal.data.unleveredReturnPct)}`,
+    `Net funding fee: ${fmtSignedUsdWithDirection(signal.data.netFundingFeeUsd)}`,
     "",
     ...totalsBlock(signal),
   ].join("\n");
 }
 
-export function formatExtremeSellPressureV64Messages(signals: StrategySignal[]): string[] {
+export function formatExtremeSellPressureMessages(signals: StrategySignal[]): string[] {
   const out: string[] = [];
   for (const signal of signals) {
     const eventType = readEventType(signal);

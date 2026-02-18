@@ -1,4 +1,4 @@
-# Extreme Sell Pressure v6.4 (Live Module)
+# Extreme Sell Pressure v9 (Live Module)
 
 ## Trigger
 

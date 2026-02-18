@@ -119,6 +119,8 @@ function resolveNextAlertLabel(setup: RuntimeSetupSnapshot): string {
   }
 
   if (
+    setup.strategyId === "bybit:extreme-sell-pressure:v9" ||
+    setup.strategyId === "bybit:extreme-sell-pressure-suite:v9" ||
     setup.strategyId === "bybit:extreme-sell-pressure:v64" ||
     setup.strategyId === "bybit:extreme-sell-pressure-suite:v64" ||
     setup.strategyId === "bybit:extreme-sell-pressure:v43" ||
