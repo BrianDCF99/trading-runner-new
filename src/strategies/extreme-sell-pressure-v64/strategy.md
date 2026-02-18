@@ -42,4 +42,4 @@ Persists:
 - Exit alerts for TP / TIME / LIQ
 - Replacement close is folded into `ENTRY REPLACE SHORT` (single replacement alert)
 - Tickers are rendered as clickable links.
-- All alerts include live totals: entries, missed trades, winners, losers, liquidated, replaced, pnl, win%.
+- All alerts include live totals: entries, missed trades, winners, losers, liquidated, replaced, current equity, cash, margin-in-use, portfolio pnl, win%.

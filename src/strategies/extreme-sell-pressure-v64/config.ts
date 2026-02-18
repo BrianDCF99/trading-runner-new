@@ -40,6 +40,10 @@ export interface ExtremeSellPressureV64Config {
     takeProfitPct: number;
     maxHoldHours: number;
   };
+  capital: {
+    startingEquityUsd: number;
+    entryMarginPct: number;
+  };
   portfolio: {
     maxOpenPositions: number;
     replaceLosingThresholdPct: number;
@@ -71,12 +75,18 @@ export const EXTREME_SELL_PRESSURE_V64_CONFIG: ExtremeSellPressureV64Config = {
     sellRatioMax: readPositiveEnv(["ESP_V64_SELL_RATIO_MAX", "ESP_V43_SELL_RATIO_MAX"], 0.2),
     // Event trigger: same 1h candle volume >= 1,000,000. Override: ESP_V64_MIN_HOUR_VOLUME (legacy: ESP_V43_MIN_HOUR_VOLUME)
     minHourVolume: readPositiveEnv(["ESP_V64_MIN_HOUR_VOLUME", "ESP_V43_MIN_HOUR_VOLUME"], 1_000_000),
-    // Override: ESP_V64_LEVERAGE (legacy fallback: ESP_V43_LEVERAGE)
-    leverage: readPositiveEnv(["ESP_V64_LEVERAGE", "ESP_V43_LEVERAGE"], 5),
+    // Override: ESP_V64_LEVERAGE
+    leverage: readPositiveEnv("ESP_V64_LEVERAGE", 5),
     // TP-only at +4% unlevered move in favor of the short. Override: ESP_V64_TAKE_PROFIT_PCT (legacy: ESP_V43_TAKE_PROFIT_PCT)
     takeProfitPct: readRatioOrPercentEnv(["ESP_V64_TAKE_PROFIT_PCT", "ESP_V43_TAKE_PROFIT_PCT"], 0.04),
     // Override: ESP_V64_MAX_HOLD_HOURS (legacy fallback: ESP_V43_MAX_HOLD_HOURS)
     maxHoldHours: Math.max(1, Math.floor(readPositiveEnv(["ESP_V64_MAX_HOLD_HOURS", "ESP_V43_MAX_HOLD_HOURS"], 48))),
+  },
+  capital: {
+    // Initial equity used for live portfolio accounting (cash + position value).
+    startingEquityUsd: readPositiveEnv("ESP_V64_STARTING_EQUITY_USD", 10_000),
+    // Position margin sizing as a fraction of current equity (default 1%).
+    entryMarginPct: readRatioOrPercentEnv("ESP_V64_ENTRY_MARGIN_PCT", 0.01),
   },
   portfolio: {
     // Override: ESP_V64_MAX_OPEN_POSITIONS (legacy fallback: ESP_V43_MAX_OPEN_POSITIONS)

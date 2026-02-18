@@ -90,7 +90,7 @@ export class TelegramNotifier implements NotifierPort {
 
     const payload: Record<string, unknown> = {
       chat_id: targetChat,
-      text: this.withNewTag(text),
+      text,
       parse_mode: this.options.parseMode,
       disable_web_page_preview: true,
     };
@@ -176,11 +176,6 @@ export class TelegramNotifier implements NotifierPort {
     return () => {
       this.polling = false;
     };
-  }
-
-  private withNewTag(text: string): string {
-    if (text.includes("<b>NEW</b>")) return text;
-    return `🆕 <b>NEW</b>\n${text}`;
   }
 
   private apiUrl(path: string): string {

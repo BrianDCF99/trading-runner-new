@@ -2,7 +2,7 @@
  * Extreme sell-pressure v6.4 message formatter.
  */
 import type { StrategySignal } from "../../core/domain/types.js";
-import { escapeHtml, formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
+import { formatSymbolLink } from "../../core/utils/telegramSymbolLink.js";
 
 type ExtremeSellPressureEventType =
   | "ENTRY_OPEN_SHORT"
@@ -19,9 +19,20 @@ interface TotalsPayload {
   losers: number;
   liquidated: number;
   replaced: number;
+  openPositions: number;
+  startingEquityUsd: number;
+  cashUsd: number;
+  marginInUseUsd: number;
+  openNotionalUsd: number;
+  unrealizedPnlUsd: number;
+  realizedPnlUsd: number;
+  currentEquityUsd: number;
+  totalPnlUsd: number;
   pnlPct: number;
   winPct: number;
 }
+
+const STRATEGY_TITLE = "Extreme Sell Pressure";
 
 function readEventType(signal: StrategySignal): ExtremeSellPressureEventType | null {
   const raw = signal.data.eventType;
@@ -84,6 +95,15 @@ function readTotals(signal: StrategySignal): TotalsPayload {
       losers: 0,
       liquidated: 0,
       replaced: 0,
+      openPositions: 0,
+      startingEquityUsd: 0,
+      cashUsd: 0,
+      marginInUseUsd: 0,
+      openNotionalUsd: 0,
+      unrealizedPnlUsd: 0,
+      realizedPnlUsd: 0,
+      currentEquityUsd: 0,
+      totalPnlUsd: 0,
       pnlPct: 0,
       winPct: 0,
     };
@@ -97,6 +117,15 @@ function readTotals(signal: StrategySignal): TotalsPayload {
     losers: Math.max(0, Math.floor(asFiniteNumber(obj.losers) ?? 0)),
     liquidated: Math.max(0, Math.floor(asFiniteNumber(obj.liquidated) ?? 0)),
     replaced: Math.max(0, Math.floor(asFiniteNumber(obj.replaced) ?? 0)),
+    openPositions: Math.max(0, Math.floor(asFiniteNumber(obj.openPositions) ?? 0)),
+    startingEquityUsd: asFiniteNumber(obj.startingEquityUsd) ?? 0,
+    cashUsd: asFiniteNumber(obj.cashUsd) ?? 0,
+    marginInUseUsd: asFiniteNumber(obj.marginInUseUsd) ?? 0,
+    openNotionalUsd: asFiniteNumber(obj.openNotionalUsd) ?? 0,
+    unrealizedPnlUsd: asFiniteNumber(obj.unrealizedPnlUsd) ?? 0,
+    realizedPnlUsd: asFiniteNumber(obj.realizedPnlUsd) ?? 0,
+    currentEquityUsd: asFiniteNumber(obj.currentEquityUsd) ?? 0,
+    totalPnlUsd: asFiniteNumber(obj.totalPnlUsd) ?? 0,
     pnlPct: asFiniteNumber(obj.pnlPct) ?? 0,
     winPct: asFiniteNumber(obj.winPct) ?? 0,
   };
@@ -104,6 +133,16 @@ function readTotals(signal: StrategySignal): TotalsPayload {
 
 function totalsBlock(signal: StrategySignal): string[] {
   const totals = readTotals(signal);
+  const equityText = `$${totals.currentEquityUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  const cashText = `$${totals.cashUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  const marginText = `$${totals.marginInUseUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  const notionalText = `$${totals.openNotionalUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  const unrealizedText = `${totals.unrealizedPnlUsd > 0 ? "+" : ""}$${totals.unrealizedPnlUsd.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+  })}`;
+  const totalPnlUsdText = `${totals.totalPnlUsd > 0 ? "+" : ""}$${totals.totalPnlUsd.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+  })}`;
   return [
     "Totals:",
     `Entries: ${totals.entries}`,
@@ -112,16 +151,26 @@ function totalsBlock(signal: StrategySignal): string[] {
     `Losers: ${totals.losers}`,
     `Liquidated: ${totals.liquidated}`,
     `Replaced: ${totals.replaced}`,
-    `PnL: ${fmtSignedPercent(totals.pnlPct)}`,
+    `Open Positions: ${totals.openPositions}`,
+    `Current Equity: ${equityText}`,
+    `Cash: ${cashText}`,
+    `Margin In Use: ${marginText}`,
+    `Open Notional: ${notionalText}`,
+    `Unrealized PnL: ${unrealizedText}`,
+    `PnL (vs start): ${fmtSignedPercent(totals.pnlPct)} | ${totalPnlUsdText}`,
     `Win %: ${fmtPercent(totals.winPct)}`,
   ];
 }
 
+function strategyHeader(): string[] {
+  return [`🚨 <b>${STRATEGY_TITLE}</b>`, ""];
+}
+
 function formatEntryOpenShortMessage(signal: StrategySignal): string {
   return [
+    ...strategyHeader(),
     "📉 <b>ENTRY OPEN SHORT</b>",
     formatSymbolLink("bybit", signal.symbol),
-    `Strategy: ${escapeHtml(signal.strategyName)}`,
     `Entry Cond 1: Sell Ratio <= ${fmtRatio(signal.data.sellRatioThreshold)} (now ${fmtRatio(signal.data.sellRatio)})`,
     `Entry Cond 2: 1h Volume >= ${fmtNumber(signal.data.volumeThreshold, 0)} (now ${fmtNumber(signal.data.hourVolume, 0)})`,
     `Entry Price: ${fmtUsd(signal.data.entryPrice)}`,
@@ -139,9 +188,9 @@ function formatEntryReplaceShortMessage(signal: StrategySignal): string {
       : null;
 
   return [
+    ...strategyHeader(),
     "♻️ <b>ENTRY REPLACE SHORT</b>",
     formatSymbolLink("bybit", signal.symbol),
-    `Strategy: ${escapeHtml(signal.strategyName)}`,
     `Entry Cond 1: Sell Ratio <= ${fmtRatio(signal.data.sellRatioThreshold)} (now ${fmtRatio(signal.data.sellRatio)})`,
     `Entry Cond 2: 1h Volume >= ${fmtNumber(signal.data.volumeThreshold, 0)} (now ${fmtNumber(signal.data.hourVolume, 0)})`,
     `Entry Price: ${fmtUsd(signal.data.entryPrice)}`,
@@ -165,11 +214,11 @@ function formatExitMessage(signal: StrategySignal): string {
         : "🟥 <b>EXIT LIQUIDATED</b>";
 
   return [
+    ...strategyHeader(),
     header,
     formatSymbolLink("bybit", signal.symbol),
     `PnL: ${fmtSignedPercent(signal.data.leveragedReturnPct)}`,
-    `% On Trade (${fmtNumber(signal.data.leverage, 2)}x): ${fmtSignedPercent(signal.data.leveragedReturnPct)} | Unlev: ${fmtSignedPercent(signal.data.unleveredReturnPct)}`,
-    "Mood: logged and rolling forward.",
+    `Leverage: ${fmtNumber(signal.data.leverage, 2)}x | Unlev: ${fmtSignedPercent(signal.data.unleveredReturnPct)}`,
     "",
     ...totalsBlock(signal),
   ].join("\n");

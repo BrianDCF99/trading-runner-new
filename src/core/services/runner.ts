@@ -620,6 +620,12 @@ export class RunnerService implements RunnerPort {
     if (kind === "sellPressure") {
       const stats = this.readSellPressureStatsFromModule();
       const pnlText = `${stats.pnlPct > 0 ? "+" : ""}${stats.pnlPct.toFixed(2)}%`;
+      const totalPnlUsdText = `${stats.totalPnlUsd > 0 ? "+" : ""}$${stats.totalPnlUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+      const currentEquityText = `$${stats.currentEquityUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+      const cashText = `$${stats.cashUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+      const marginText = `$${stats.marginInUseUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+      const notionalText = `$${stats.openNotionalUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+      const unrealizedText = `${stats.unrealizedPnlUsd > 0 ? "+" : ""}$${stats.unrealizedPnlUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
       lines.push("");
       lines.push("📊 <b>Live Totals</b>");
       lines.push(`Entries: <b>${stats.entries}</b>`);
@@ -628,7 +634,13 @@ export class RunnerService implements RunnerPort {
       lines.push(`Losers: <b>${stats.losers}</b>`);
       lines.push(`Liquidated: <b>${stats.liquidated}</b>`);
       lines.push(`Replaced: <b>${stats.replaced}</b>`);
-      lines.push(`PnL: <b>${pnlText}</b>`);
+      lines.push(`Open Positions: <b>${stats.openPositions}</b>`);
+      lines.push(`Current Equity: <b>${currentEquityText}</b>`);
+      lines.push(`Cash: <b>${cashText}</b>`);
+      lines.push(`Margin In Use: <b>${marginText}</b>`);
+      lines.push(`Open Notional: <b>${notionalText}</b>`);
+      lines.push(`Unrealized PnL: <b>${unrealizedText}</b>`);
+      lines.push(`PnL (vs start): <b>${pnlText}</b> | <b>${totalPnlUsdText}</b>`);
       lines.push(`Win %: <b>${stats.winPct.toFixed(2)}%</b>`);
     }
 
@@ -819,6 +831,15 @@ export class RunnerService implements RunnerPort {
     losers: number;
     liquidated: number;
     replaced: number;
+    openPositions: number;
+    startingEquityUsd: number;
+    cashUsd: number;
+    marginInUseUsd: number;
+    openNotionalUsd: number;
+    unrealizedPnlUsd: number;
+    realizedPnlUsd: number;
+    currentEquityUsd: number;
+    totalPnlUsd: number;
     pnlPct: number;
     winPct: number;
   } {
@@ -839,6 +860,15 @@ export class RunnerService implements RunnerPort {
         losers: 0,
         liquidated: 0,
         replaced: 0,
+        openPositions: 0,
+        startingEquityUsd: 0,
+        cashUsd: 0,
+        marginInUseUsd: 0,
+        openNotionalUsd: 0,
+        unrealizedPnlUsd: 0,
+        realizedPnlUsd: 0,
+        currentEquityUsd: 0,
+        totalPnlUsd: 0,
         pnlPct: 0,
         winPct: 0,
       };
@@ -853,6 +883,15 @@ export class RunnerService implements RunnerPort {
         losers: 0,
         liquidated: 0,
         replaced: 0,
+        openPositions: 0,
+        startingEquityUsd: 0,
+        cashUsd: 0,
+        marginInUseUsd: 0,
+        openNotionalUsd: 0,
+        unrealizedPnlUsd: 0,
+        realizedPnlUsd: 0,
+        currentEquityUsd: 0,
+        totalPnlUsd: 0,
         pnlPct: 0,
         winPct: 0,
       };
@@ -870,6 +909,15 @@ export class RunnerService implements RunnerPort {
       losers: Math.max(0, Math.floor(read("losers"))),
       liquidated: Math.max(0, Math.floor(read("liquidated"))),
       replaced: Math.max(0, Math.floor(read("replaced"))),
+      openPositions: Math.max(0, Math.floor(read("openPositions"))),
+      startingEquityUsd: read("startingEquityUsd"),
+      cashUsd: read("cashUsd"),
+      marginInUseUsd: read("marginInUseUsd"),
+      openNotionalUsd: read("openNotionalUsd"),
+      unrealizedPnlUsd: read("unrealizedPnlUsd"),
+      realizedPnlUsd: read("realizedPnlUsd"),
+      currentEquityUsd: read("currentEquityUsd"),
+      totalPnlUsd: read("totalPnlUsd"),
       pnlPct: read("pnlPct"),
       winPct: read("winPct"),
     };
