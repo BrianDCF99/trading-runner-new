@@ -9,6 +9,7 @@ interface TelegramNotifierOptions {
   chatId: string | null;
   parseMode: "HTML" | "Markdown" | "MarkdownV2";
   sendDelayMs: number;
+  onSendFailure?: (details: Record<string, unknown>) => void;
 }
 
 export interface TelegramCommand {
@@ -61,6 +62,10 @@ export class TelegramNotifier implements NotifierPort {
     return Boolean(this.options.enabled && this.options.botToken);
   }
 
+  private reportSendFailure(details: Record<string, unknown>): void {
+    this.options.onSendFailure?.(details);
+  }
+
   async notify(lines: string[]): Promise<number> {
     if (!this.enabled || !this.options.chatId) return 0;
 
@@ -83,10 +88,25 @@ export class TelegramNotifier implements NotifierPort {
       inlineKeyboard?: InlineKeyboardButton[][];
     }
   ): Promise<number | null> {
-    if (!this.enabled) return null;
+    const preview = text.slice(0, 160);
+    if (!this.enabled) {
+      this.reportSendFailure({
+        reason: "telegram_notifier_disabled",
+        hasBotToken: Boolean(this.options.botToken),
+        enabledFlag: this.options.enabled,
+        textPreview: preview,
+      });
+      return null;
+    }
 
     const targetChat = options?.chatId ?? this.options.chatId;
-    if (!targetChat) return null;
+    if (!targetChat) {
+      this.reportSendFailure({
+        reason: "telegram_chat_id_missing",
+        textPreview: preview,
+      });
+      return null;
+    }
 
     const payload: Record<string, unknown> = {
       chat_id: targetChat,
@@ -106,7 +126,10 @@ export class TelegramNotifier implements NotifierPort {
       };
     }
 
-    const result = await this.callTelegram<{ message_id?: number }>("/sendMessage", payload, true);
+    const result = await this.callTelegram<{ message_id?: number }>("/sendMessage", payload, true, {
+      textPreview: preview,
+      targetChat,
+    });
     return result?.message_id ?? null;
   }
 
@@ -185,48 +208,72 @@ export class TelegramNotifier implements NotifierPort {
   private async callTelegram<T>(
     path: string,
     payload: Record<string, unknown>,
-    retryRateLimit = false
+    retryRateLimit = false,
+    context?: { textPreview?: string; targetChat?: string }
   ): Promise<T | null> {
     const attempts = retryRateLimit ? 4 : 1;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const response = await fetch(this.apiUrl(path), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const response = await fetch(this.apiUrl(path), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
-      const rawBody = await response.text();
-      let body:
-        | {
+        const rawBody = await response.text();
+        let body:
+          | {
+              ok?: boolean;
+              result?: T;
+              description?: string;
+              parameters?: { retry_after?: number };
+            }
+          | null = null;
+        try {
+          body = JSON.parse(rawBody) as {
             ok?: boolean;
             result?: T;
             description?: string;
             parameters?: { retry_after?: number };
-          }
-        | null = null;
-      try {
-        body = JSON.parse(rawBody) as {
-          ok?: boolean;
-          result?: T;
-          description?: string;
-          parameters?: { retry_after?: number };
-        };
-      } catch {
-        body = null;
-      }
+          };
+        } catch {
+          body = null;
+        }
 
-      if (response.ok && body?.ok) {
-        return body.result ?? null;
-      }
+        if (response.ok && body?.ok) {
+          return body.result ?? null;
+        }
 
-      if (retryRateLimit && response.status === 429 && attempt < attempts) {
-        const retryAfterSec = Number(body?.parameters?.retry_after ?? 3);
-        const waitMs = Math.max(1_000, (Number.isFinite(retryAfterSec) ? retryAfterSec : 3) * 1_000 + 250);
-        await sleep(waitMs);
-        continue;
-      }
+        if (retryRateLimit && response.status === 429 && attempt < attempts) {
+          const retryAfterSec = Number(body?.parameters?.retry_after ?? 3);
+          const waitMs = Math.max(1_000, (Number.isFinite(retryAfterSec) ? retryAfterSec : 3) * 1_000 + 250);
+          await sleep(waitMs);
+          continue;
+        }
 
-      return null;
+        this.reportSendFailure({
+          reason: "telegram_api_error",
+          path,
+          attempt,
+          attempts,
+          status: response.status,
+          description: body?.description ?? null,
+          targetChat: context?.targetChat ?? null,
+          textPreview: context?.textPreview ?? null,
+        });
+        return null;
+      } catch (error) {
+        this.reportSendFailure({
+          reason: "telegram_network_error",
+          path,
+          attempt,
+          attempts,
+          error: error instanceof Error ? error.message : String(error),
+          targetChat: context?.targetChat ?? null,
+          textPreview: context?.textPreview ?? null,
+        });
+        return null;
+      }
     }
 
     return null;

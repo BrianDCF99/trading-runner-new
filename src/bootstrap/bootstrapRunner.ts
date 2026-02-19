@@ -59,6 +59,9 @@ export async function bootstrapRunner(): Promise<{
     chatId: telegramChatId,
     parseMode: config.telegram.parseMode,
     sendDelayMs: config.telegram.sendDelayMs,
+    onSendFailure: (details) => {
+      logger.warn("Telegram send failed", details);
+    },
   });
   logger.info("Telegram notifier config", {
     enabled: config.telegram.enabled,
