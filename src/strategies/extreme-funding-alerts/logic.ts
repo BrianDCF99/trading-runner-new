@@ -111,22 +111,45 @@ export async function evaluateExtremeFundingSignals(context: StrategyContext): P
 
     if (!existing) {
       if (!currentlyExtreme) continue;
-      trackers[ticker.symbol] = {
+      const firstTracker: ExtremeFundingTracker = {
         symbol: ticker.symbol,
         fundingRate: ticker.fundingRate,
         threshold,
         fundingIntervalMinutes,
         settlementLabel,
-        firstTriggeredAtMs: null,
+        firstTriggeredAtMs: context.nowMs,
         lastPrice: ticker.lastPrice,
-        lastAlertPrice: null,
-        lastAlertAtMs: null,
-        extremeStreak: 1,
+        lastAlertPrice: ticker.lastPrice,
+        lastAlertAtMs: context.nowMs,
+        // Streak is zero on the first alert in a new extreme sequence.
+        extremeStreak: 0,
         extremeStreakStartPrice: ticker.lastPrice,
         lastObservedFundingWindowKey: fundingWindowKey,
-        lastAlertFundingWindowKey: null,
+        lastAlertFundingWindowKey: fundingWindowKey,
         isCurrentlyExtreme: true,
       };
+      trackers[ticker.symbol] = firstTracker;
+      out.push({
+        symbol: ticker.symbol,
+        phase: "ALERT",
+        score: ALERT_SCORE,
+        data: {
+          fundingRate: ticker.fundingRate,
+          threshold,
+          fundingIntervalMinutes,
+          settlementLabel,
+          triggerReason: "first extreme detection",
+          triggeredAtMs: context.nowMs,
+          alertPrice: ticker.lastPrice,
+          priceChangeSinceLastNotification: 0,
+          extremeStreak: 0,
+          // Legacy key retained for backwards compatibility in any external consumers.
+          extremeWindowsInRow: 0,
+          priceChangeSinceFirstNotificationInStreak: 0,
+          markPrice: ticker.markPrice,
+          nextFundingTimeMs: ticker.nextFundingTimeMs,
+        },
+      });
       continue;
     }
 
@@ -161,10 +184,11 @@ export async function evaluateExtremeFundingSignals(context: StrategyContext): P
       existing.lastAlertFundingWindowKey === previousWindowKey;
     const consecutiveWindow = isConsecutiveFundingWindow(previousWindowKey, fundingWindowKey, fundingIntervalMinutes);
 
-    if (previousWindowWasExtreme && consecutiveWindow && existing.extremeStreak > 0) {
+    if (previousWindowWasExtreme && consecutiveWindow) {
       existing.extremeStreak += 1;
     } else {
-      existing.extremeStreak = 1;
+      // New extreme sequence starts at zero.
+      existing.extremeStreak = 0;
       existing.extremeStreakStartPrice = ticker.lastPrice;
       existing.firstTriggeredAtMs = context.nowMs;
     }
