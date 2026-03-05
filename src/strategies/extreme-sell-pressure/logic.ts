@@ -159,7 +159,6 @@ const portfolioState: PortfolioState = {
   cashUsd: EXTREME_SELL_PRESSURE_CONFIG.capital.startingEquityUsd,
 };
 let nextPositionId = 1;
-let symbolScanCursor = 0;
 
 function listOpenPositions(): OpenPosition[] {
   return Object.values(openPositions);
@@ -247,18 +246,6 @@ function getOrCreateSymbolState(symbol: string, nowMs: number): SymbolSignalStat
   };
   symbolStates[symbol] = created;
   return created;
-}
-
-function selectScanBatch(symbols: string[], batchSize: number): string[] {
-  if (symbols.length === 0) return [];
-  const normalizedBatchSize = Math.max(1, Math.min(batchSize, symbols.length));
-  const start = symbolScanCursor % symbols.length;
-  const out: string[] = [];
-  for (let i = 0; i < normalizedBatchSize; i += 1) {
-    out.push(symbols[(start + i) % symbols.length] as string);
-  }
-  symbolScanCursor = (start + normalizedBatchSize) % symbols.length;
-  return out;
 }
 
 async function mapWithConcurrency<T, U>(
@@ -841,12 +828,7 @@ export async function evaluateExtremeSellPressureSignals(
   }
 
   const eligibleSymbols = sortedEligibleSymbols(context);
-  const scanSymbols = selectScanBatch(
-    eligibleSymbols,
-    EXTREME_SELL_PRESSURE_CONFIG.market.sellRatioScanBatchSize
-  );
-
-  const candidatesRaw = await mapWithConcurrency(scanSymbols, SELL_RATIO_CONCURRENCY, (symbol) =>
+  const candidatesRaw = await mapWithConcurrency(eligibleSymbols, SELL_RATIO_CONCURRENCY, (symbol) =>
     evaluateEntryCandidate({ symbol, context, tickerBySymbol })
   );
   const candidates = candidatesRaw.filter((item): item is EntryCandidate => item !== null);
@@ -988,7 +970,6 @@ export function exportExtremeSellPressureState(): Record<string, unknown> {
     summaryStats,
     portfolioState,
     nextPositionId,
-    symbolScanCursor,
     snapshotStats: buildTotalsSnapshot(),
   };
 }
@@ -1001,7 +982,6 @@ export function hydrateExtremeSellPressureState(snapshot: unknown): void {
     summaryStats?: Partial<SummaryStats>;
     portfolioState?: Partial<PortfolioState>;
     nextPositionId?: unknown;
-    symbolScanCursor?: unknown;
   };
 
   for (const key of Object.keys(openPositions)) {
@@ -1156,10 +1136,5 @@ export function hydrateExtremeSellPressureState(snapshot: unknown): void {
     Object.values(openPositions).reduce((acc, position) => Math.max(acc, position.positionId), 0) + 1;
   if (nextPositionId < maxHydratedPositionId) {
     nextPositionId = maxHydratedPositionId;
-  }
-
-  const snapshotScanCursor = safeNumber(typed.symbolScanCursor);
-  if (snapshotScanCursor !== null && snapshotScanCursor >= 0) {
-    symbolScanCursor = Math.floor(snapshotScanCursor);
   }
 }

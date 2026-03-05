@@ -52,7 +52,6 @@ export interface ExtremeSellPressureConfig {
     preventDuplicateSymbolEntries: boolean;
   };
   market: {
-    sellRatioScanBatchSize: number;
     klineLookbackHours: number;
   };
   retention: {
@@ -127,16 +126,6 @@ export const EXTREME_SELL_PRESSURE_CONFIG: ExtremeSellPressureConfig = {
       ).toLowerCase() !== "false",
   },
   market: {
-    // Cap external sell-ratio requests each cycle to keep runtime stable.
-    sellRatioScanBatchSize: Math.max(
-      1,
-      Math.floor(
-        readPositiveEnv(
-          ["ESP_V9_SELL_RATIO_SCAN_BATCH_SIZE", "ESP_V64_SELL_RATIO_SCAN_BATCH_SIZE", "ESP_V43_SELL_RATIO_SCAN_BATCH_SIZE"],
-          120
-        )
-      )
-    ),
     klineLookbackHours: Math.max(
       2,
       Math.floor(
