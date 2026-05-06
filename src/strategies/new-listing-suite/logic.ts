@@ -149,11 +149,15 @@ function transition(tracker: ListingTracker, phase: ListingPhase, nowMs: number,
 }
 
 function cleanup(nowMs: number): void {
-  // Drop DISQUALIFIED immediately; retain CLOSED for visibility window.
+  // Retain terminal DISQUALIFIED trackers until the discovery window expires.
+  // Otherwise old non-qualifying listings are rediscovered every cycle and replay alerts.
   const retentionMs = CLOSED_RETENTION_HOURS * 60 * 60 * 1000;
   for (const [symbol, tracker] of Object.entries(trackers)) {
     if (tracker.phase === "DISQUALIFIED") {
-      delete trackers[symbol];
+      const ageHours = (nowMs - tracker.launchTimeMs) / (60 * 60 * 1000);
+      if (ageHours > DISCOVERY_MAX_AGE_HOURS) {
+        delete trackers[symbol];
+      }
       continue;
     }
     if (
@@ -528,31 +532,39 @@ export function hydrateNewListingState(snapshot: unknown): void {
   }
 }
 
+export function resetNewListingState(): void {
+  for (const symbol of Object.keys(trackers)) {
+    delete trackers[symbol];
+  }
+}
+
 export function listNewListingTrackedSetups(): StrategyTrackedSetup[] {
-  return Object.values(trackers).map((tracker) => ({
-    key: `bybit:new-listing:${tracker.strategy}:${tracker.symbol}`,
-    strategyId: resolveStrategyId(tracker.strategy),
-    strategyName: resolveStrategyName(tracker.strategy),
-    symbol: tracker.symbol,
-    phase: tracker.phase,
-    isReady:
-      tracker.phase === "READY_LEG1" ||
-      tracker.phase === "READY_LEG2" ||
-      tracker.phase === "READY_S7",
-    score: scoreForPhase(tracker.phase),
-    payload: {
-      launchTimeMs: tracker.launchTimeMs,
-      listingPrice: tracker.listingPrice,
-      lastPrice: tracker.lastPrice,
-      checkpoint4hPrice: tracker.checkpoint4hPrice,
-      checkpoint8hPrice: tracker.checkpoint8hPrice,
-      transitionedAtMs: tracker.transitionedAtMs,
-      closedAtMs: tracker.closedAtMs,
-      disqualifiedReason: tracker.disqualifiedReason,
-      checkpoint4hProcessed: tracker.checkpoint4hProcessed,
-      checkpoint8hProcessed: tracker.checkpoint8hProcessed,
-      hasReadySignal: tracker.hasReadySignal,
-    },
-    updatedAtMs: tracker.closedAtMs ?? tracker.transitionedAtMs ?? Date.now(),
-  }));
+  return Object.values(trackers)
+    .filter((tracker) => tracker.phase !== "DISQUALIFIED")
+    .map((tracker) => ({
+      key: `bybit:new-listing:${tracker.strategy}:${tracker.symbol}`,
+      strategyId: resolveStrategyId(tracker.strategy),
+      strategyName: resolveStrategyName(tracker.strategy),
+      symbol: tracker.symbol,
+      phase: tracker.phase,
+      isReady:
+        tracker.phase === "READY_LEG1" ||
+        tracker.phase === "READY_LEG2" ||
+        tracker.phase === "READY_S7",
+      score: scoreForPhase(tracker.phase),
+      payload: {
+        launchTimeMs: tracker.launchTimeMs,
+        listingPrice: tracker.listingPrice,
+        lastPrice: tracker.lastPrice,
+        checkpoint4hPrice: tracker.checkpoint4hPrice,
+        checkpoint8hPrice: tracker.checkpoint8hPrice,
+        transitionedAtMs: tracker.transitionedAtMs,
+        closedAtMs: tracker.closedAtMs,
+        disqualifiedReason: tracker.disqualifiedReason,
+        checkpoint4hProcessed: tracker.checkpoint4hProcessed,
+        checkpoint8hProcessed: tracker.checkpoint8hProcessed,
+        hasReadySignal: tracker.hasReadySignal,
+      },
+      updatedAtMs: tracker.closedAtMs ?? tracker.transitionedAtMs ?? Date.now(),
+    }));
 }
